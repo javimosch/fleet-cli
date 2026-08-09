@@ -1,0 +1,69 @@
+version: 1
+name: machin-growth
+repo: javimosch/machin
+
+defaults:
+  timeout: 300s
+
+state:
+  backend: json
+
+budgets:
+  outbound_per_day: 10
+  outbound_per_hour: 2
+  per_target_cooldown: 720h
+  quiet_hours: "22:00-08:00 Europe/Paris"
+
+hitl:
+  mode: required
+  expire_after: 48h
+
+channels:
+  ops:
+    kind: cuzz
+    channel: machin-growth
+  alerts:
+    kind: cuzz
+    channel: machin-alerts
+
+loops:
+  - name: observe
+    schedule: "daily@09:00"
+    command: ./loops/observe.sh
+    outbound: false
+    emits: [stars.recorded]
+
+  - name: prospect
+    schedule: "daily@09:15"
+    command: ./loops/prospect.sh
+    outbound: false
+    rate:
+      max_per_run: 20
+    emits: [prospect.found]
+
+  - name: draft
+    on: [prospect.found]
+    command: ./loops/draft.sh
+    outbound: false
+    rate:
+      max_per_run: 10
+    emits: [proposal.created]
+
+  - name: dispatch
+    schedule: "hourly"
+    command: ./loops/dispatch.sh
+    outbound: true
+    requires_approval: true
+    rate:
+      max_per_run: 2
+      max_per_day: 10
+    emits: [proposal.dispatched]
+
+  - name: report
+    schedule: "daily@20:00"
+    command: ./loops/report.sh
+    outbound: false
+    publish:
+      kind: hart
+      id: machin-growth
+      visibility: unlisted
