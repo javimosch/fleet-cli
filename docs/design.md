@@ -28,7 +28,7 @@ It demonstrates the framework without violating GitHub ToS or being spammy.
 
 ## Roadmap
 
-- `fleet install` / `fleet uninstall` — render systemd user timers.
+- <s>`fleet install` / `fleet uninstall` — render systemd user timers.</s> Done.
 - `fleet report` — publish a hart dashboard.
 - `fleet emit` — trigger event edges manually.
 - Event-driven scheduling: a loop with `on: [event]` runs when the event fires.

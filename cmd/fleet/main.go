@@ -44,6 +44,10 @@ func main() {
 		os.Exit(cmdDecision(cmd, tail))
 	case "state":
 		os.Exit(cmdState(tail))
+	case "install":
+		os.Exit(cmdInstall(tail))
+	case "uninstall":
+		os.Exit(cmdUninstall(tail))
 	default:
 		fail("unknown command: %s", cmd)
 	}
@@ -63,6 +67,8 @@ Commands:
   reject <fleet> <proposal-id> [--reason <reason>]
   state <fleet> get <key>
   state <fleet> set <key> <value>
+  install <fleet> [--system] [--no-start]
+  uninstall <fleet> [--system]
 
 Global flags:
   -f <path>   fleet directory (default ./fleets/<name>)
@@ -83,6 +89,9 @@ func fleetPath(name string) string {
 	if f := flagValue([]string{}, "f"); f != "" {
 		return f
 	}
+	if d := os.Getenv("FLEET_DIR"); d != "" {
+		return d
+	}
 	return filepath.Join(".", "fleets", name)
 }
 
@@ -96,11 +105,15 @@ func flagValue(args []string, name string) string {
 
 func loadFleet(name string) (*config.Fleet, string, error) {
 	path := fleetPath(name)
-	fleet, err := config.Load(filepath.Join(path, "fleet.yml"))
+	absPath, err := filepath.Abs(path)
 	if err != nil {
 		return nil, "", err
 	}
-	return fleet, path, nil
+	fleet, err := config.Load(filepath.Join(absPath, "fleet.yml"))
+	if err != nil {
+		return nil, "", err
+	}
+	return fleet, absPath, nil
 }
 
 func openStores(fleet *config.Fleet) (*state.Store, *hitl.Queue, error) {
