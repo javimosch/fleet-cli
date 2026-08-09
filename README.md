@@ -29,6 +29,17 @@ go build -o fleet ./cmd/fleet
 | `approve <fleet> <proposal-id>` | Approve an outbound proposal |
 | `reject <fleet> <proposal-id>` | Reject an outbound proposal |
 | `state <fleet> get/set/all` | Inspect or mutate state |
+| `install <fleet> [--system] [--no-start]` | Render and enable systemd timers |
+| `uninstall <fleet> [--system]` | Remove systemd timers and services |
+
+## Systemd timers
+
+```bash
+./fleet install machin-growth
+systemctl --user list-timers | grep fleet-
+```
+
+Units are written to `~/.config/systemd/user/` and start on the next user session. To start them immediately, omit `--no-start` or run `systemctl --user start fleet-<fleet>-<loop>.timer`.
 
 ## Fleet graph
 
