@@ -29,7 +29,7 @@ echo "$prospects" | jq -c --argjson max "$max_drafts" --arg repo javimosch/machi
   .[:$max] |
   .[] |
   # High bar: strong title/body match.
-  select(.score >= 70 and (.reason | contains("strongly match"))) |
+  select(.score >= 85 and (.reason | contains("strongly match"))) |
   # Skip if we already engaged or queued this target.
   select(.url as $u | $engaged | index($u) | not) |
   select(.url as $u | $queued | index($u) | not) |

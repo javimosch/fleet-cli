@@ -63,7 +63,7 @@ cat "$run_dir"/raw-*.json 2>/dev/null | jq -s 'add | group_by(.url) | map(.[0]) 
                else "low relevance" end),
       body: ($body | .[0:2000])
     }
-    | select(.score >= 30)
+    | select(.score >= 85)
   )
   | sort_by(-.score)
   | .[:30]
@@ -88,11 +88,12 @@ if [[ -s "$run_dir/prospects.json" ]]; then
 
   if [[ -s "$tmp" ]]; then
     jq -s 'map(. + {
-      reason: (if .score >= 70 then "title/body strongly match a Go static-binary use case"
-               elif .score >= 40 then "mentions single/static binaries but may have language mismatch"
+      reason: (if .score >= 85 then "title/body strongly match a Go static-binary use case"
+               elif .score >= 50 then "mentions single/static binaries but may have language mismatch"
                else "low relevance" end)
     })
     | sort_by(-.score)
+    | map(select(.score >= 85))
     | .[:20]' "$tmp" > "$run_dir/prospects-scored.json"
     mv "$run_dir/prospects-scored.json" "$run_dir/prospects.json"
   fi

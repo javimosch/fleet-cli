@@ -125,7 +125,8 @@ else
   engaged='[]'
 fi
 
-cat > "$run_dir/result.json" <<EOF
+if [[ "$live" == "1" && "$dry" != "true" ]]; then
+  cat > "$run_dir/result.json" <<EOF
 {
   "events": $events,
   "state_set": {
@@ -134,3 +135,10 @@ cat > "$run_dir/result.json" <<EOF
   }
 }
 EOF
+else
+  cat > "$run_dir/result.json" <<EOF
+{
+  "events": $events
+}
+EOF
+fi
