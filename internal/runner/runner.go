@@ -85,26 +85,30 @@ func Run(ctx context.Context, fleet *config.Fleet, loop *config.Loop, fleetDir s
 	}
 	res.DryRun = dryRun
 
-	// Apply state mutations.
-	for k, v := range res.StateSet {
-		if err := st.Set(k, v); err != nil {
-			return res, fmt.Errorf("state set %s: %w", k, err)
+	// Apply state mutations (only when not dry-running).
+	if !dryRun {
+		for k, v := range res.StateSet {
+			if err := st.Set(k, v); err != nil {
+				return res, fmt.Errorf("state set %s: %w", k, err)
+			}
 		}
-	}
-	for k, arr := range res.StateAppend {
-		for _, item := range arr {
-			if err := st.Append(k, item); err != nil {
-				return res, fmt.Errorf("state append %s: %w", k, err)
+		for k, arr := range res.StateAppend {
+			for _, item := range arr {
+				if err := st.Append(k, item); err != nil {
+					return res, fmt.Errorf("state append %s: %w", k, err)
+				}
 			}
 		}
 	}
 
-	// Queue proposals.
-	for _, p := range res.Proposals {
-		p.Fleet = fleet.Name
-		p.Loop = loop.Name
-		if _, err := q.Add(p); err != nil {
-			return res, fmt.Errorf("queue proposal: %w", err)
+	// Queue proposals (only when not dry-running).
+	if !dryRun {
+		for _, p := range res.Proposals {
+			p.Fleet = fleet.Name
+			p.Loop = loop.Name
+			if _, err := q.Add(p); err != nil {
+				return res, fmt.Errorf("queue proposal: %w", err)
+			}
 		}
 	}
 

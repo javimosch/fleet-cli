@@ -92,7 +92,7 @@ Every outbound loop must set `requires_approval: true`. The `dispatch` loop only
 The included `fleets/machin-growth` is a dry-run, ToS-safe star-growth fleet for `javimosch/machin`.
 
 - `observe` records the current star count from the GitHub API.
-- `prospect` searches GitHub issues for relevant single/static binary discussions.
+- `prospect` searches GitHub issues for relevant single/static binary discussions and checks engaged threads for follow-up comments.
 - `draft` turns the highest-scored prospects into comment proposals.
 - `dispatch` emits `action.approved` events and queues them in `pending_actions`.
 - `execute` runs queued actions through `handlers/<kind>.sh` so the fleet stays generic.
