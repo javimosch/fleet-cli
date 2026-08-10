@@ -99,6 +99,22 @@ The included `fleets/machin-growth` is a dry-run, ToS-safe star-growth fleet for
 
 It never posts, stars, or messages anyone automatically. All outbound actions must be approved through `fleet approve` and executed through `fleet run <fleet> execute` with `FLEET_LIVE=1`.
 
+## Cost tracking
+
+Every run now reports a `cost` object. For `machin-growth` this is the number of GitHub API calls (`gh` invocations) made by that run, grouped by command.
+
+```bash
+./fleet run machin-growth observe
+# cost.gh_calls = 1
+
+./fleet run machin-growth prospect
+# cost.gh_calls = 5  (4 search + 1 issue view)
+```
+
+Rate-limit notes are attached to each cost record. GitHub's public API is free in USD/EUR; the real budget is API quota. Agentic loops that consume LLM tokens can write an explicit `cost.json` to `FLEET_RUN_DIR` and the runner will include `tokens_in`, `tokens_out`, or `usd` in the same `cost` field.
+
+Run costs are also accumulated in state under `costs`, so `./fleet state machin-growth get costs` returns a ledger.
+
 ## Design notes
 
 - Go binary stays small and dumb; domain logic lives in `loops/*.sh`.

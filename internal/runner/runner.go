@@ -22,6 +22,7 @@ type Result struct {
 	Proposals []hitl.Proposal        `json:"proposals"`
 	StateSet  map[string]interface{} `json:"state_set"`
 	StateAppend map[string][]interface{} `json:"state_append"`
+	Cost      map[string]interface{} `json:"cost"`
 	DryRun    bool                   `json:"dry_run"`
 	Log       string                 `json:"log"`
 }
@@ -52,6 +53,18 @@ func Run(ctx context.Context, fleet *config.Fleet, loop *config.Loop, fleetDir s
 	cmd := exec.CommandContext(ctx, cmdPath)
 	cmd.Dir = fleetDir
 	cmd.Env = os.Environ()
+
+	// Prepend fleet bin/ to PATH so fleets can supply command wrappers (e.g. gh cost tracker).
+	binDir := filepath.Join(fleetDir, "bin")
+	if info, err := os.Stat(binDir); err == nil && info.IsDir() {
+		for i, e := range cmd.Env {
+			if len(e) > 5 && e[:5] == "PATH=" {
+				cmd.Env[i] = "PATH=" + binDir + string(filepath.ListSeparator) + e[5:]
+				break
+			}
+		}
+		cmd.Env = append(cmd.Env, fmt.Sprintf("FLEET_BIN_DIR=%s", binDir))
+	}
 
 	// Inject fleet context into environment.
 	cmd.Env = append(cmd.Env,
@@ -110,6 +123,12 @@ func Run(ctx context.Context, fleet *config.Fleet, loop *config.Loop, fleetDir s
 				return res, fmt.Errorf("queue proposal: %w", err)
 			}
 		}
+		// Append run cost to state ledger.
+		if res.Cost != nil && len(res.Cost) > 0 {
+			if err := st.Append("costs", res.Cost); err != nil {
+				return res, fmt.Errorf("append cost: %w", err)
+			}
+		}
 	}
 
 	return res, nil
@@ -144,6 +163,18 @@ func parseOutputs(runDir string) (Result, error) {
 		}
 		res.StateSet = m
 	}
+
+	// Load explicit cost.json if a loop or wrapper wrote one.
+	if data, err := os.ReadFile(filepath.Join(runDir, "cost.json")); err == nil {
+		var cost map[string]interface{}
+		if err := json.Unmarshal(data, &cost); err == nil {
+			res.Cost = cost
+		}
+	}
+
+	// Aggregate gh call logs from fleet bin/gh wrapper.
+	res.Cost = mergeGHCost(res.Cost, runDir)
+
 	return res, nil
 }
 
@@ -170,6 +201,55 @@ func stPath(fleet *config.Fleet) string {
 
 func queuePath(fleet *config.Fleet) string {
 	return filepath.Join(stateDir(), fleet.Name+"-proposals.jsonl")
+}
+
+// mergeGHCost reads gh-calls.jsonl produced by a fleet bin/gh wrapper and returns an aggregated cost map.
+func mergeGHCost(cost map[string]interface{}, runDir string) map[string]interface{} {
+	if cost == nil {
+		cost = make(map[string]interface{})
+	}
+	data, err := os.ReadFile(filepath.Join(runDir, "gh-calls.jsonl"))
+	if err != nil {
+		return cost
+	}
+	type call struct {
+		Cmd     string `json:"cmd"`
+		Subcmd  string `json:"subcmd"`
+		At      string `json:"at"`
+	}
+	var calls []call
+	for _, line := range splitLines(data) {
+		if len(bytes.TrimSpace(line)) == 0 {
+			continue
+		}
+		var c call
+		if err := json.Unmarshal(line, &c); err != nil {
+			continue
+		}
+		calls = append(calls, c)
+	}
+	if len(calls) == 0 {
+		return cost
+	}
+
+	byCmd := make(map[string]int)
+	for _, c := range calls {
+		key := c.Cmd
+		if c.Subcmd != "" && c.Subcmd != c.Cmd {
+			key = c.Cmd + " " + c.Subcmd
+		}
+		byCmd[key]++
+	}
+
+	cost["gh_calls"] = len(calls)
+	cost["gh_calls_by_cmd"] = byCmd
+	cost["unit"] = "gh_api_call"
+	cost["rate_limit_notes"] = map[string]string{
+		"rest":    "5000/hour authenticated",
+		"search":  "10/minute authenticated",
+		"comment": "rest endpoint, counted against 5000/hour",
+	}
+	return cost
 }
 
 func stateDir() string {
