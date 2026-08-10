@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# gh wrapper — log gh calls for cost/rate-limit tracking, then run the real gh.
+set -euo pipefail
+
+run_dir="${FLEET_RUN_DIR:-/tmp/fleet-run}"
+bin_dir="${FLEET_BIN_DIR:-}"
+
+mkdir -p "$run_dir"
+
+cmd="${1:-}"
+shift 2>/dev/null || true
+subcmd=""
+for a in "$@"; do
+  if [[ "$a" != -* ]]; then
+    subcmd="$a"
+    break
+  fi
+done
+
+printf '%s\n' "{\"cmd\": \"$cmd\", \"subcmd\": \"$subcmd\", \"at\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" >> "$run_dir/gh-calls.jsonl"
+
+# Remove this wrapper's directory from PATH to avoid recursion.
+if [[ -n "$bin_dir" ]]; then
+  newpath=":${PATH}:"
+  newpath="${newpath//:$bin_dir:/:}"
+  newpath="${newpath#:}"
+  newpath="${newpath%:}"
+  export PATH="$newpath"
+fi
+
+exec gh "$cmd" ${1+"$@"}

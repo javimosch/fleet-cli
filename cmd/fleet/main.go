@@ -277,6 +277,7 @@ func cmdRun(args []string) int {
 	_ = st.RunRecord(loopName, status(err), started, finished, map[string]interface{}{
 		"dry_run": dryRun,
 		"events":  res.Events,
+		"cost":    res.Cost,
 	})
 	if err != nil {
 		fail("run %s: %v\n%s", loopName, err, res.Log)
@@ -287,6 +288,7 @@ func cmdRun(args []string) int {
 		"events":    res.Events,
 		"proposals": len(res.Proposals),
 		"log":       res.Log,
+		"cost":      res.Cost,
 	})
 	return 0
 }
