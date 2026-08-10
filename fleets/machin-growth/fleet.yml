@@ -68,6 +68,16 @@ loops:
       max_per_day: 10
     emits: [action.executed]
 
+  - name: growth_agent
+    mode: daemon
+    runtime_max: 1h
+    command: ./loops/growth_agent.sh
+    outbound: true
+    requires_approval: true
+    env:
+      AGENT_MODEL: "glm-5-2"
+    emits: [agent.suggested]
+
   - name: report
     schedule: "daily@20:00"
     command: ./loops/report.sh
