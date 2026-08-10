@@ -19,13 +19,13 @@ import (
 
 // Result contains the parsed output of a loop.
 type Result struct {
-	Events    []Event                `json:"events"`
-	Proposals []hitl.Proposal        `json:"proposals"`
-	StateSet  map[string]interface{} `json:"state_set"`
+	Events      []Event                  `json:"events"`
+	Proposals   []hitl.Proposal          `json:"proposals"`
+	StateSet    map[string]interface{}   `json:"state_set"`
 	StateAppend map[string][]interface{} `json:"state_append"`
-	Cost      map[string]interface{} `json:"cost"`
-	DryRun    bool                   `json:"dry_run"`
-	Log       string                 `json:"log"`
+	Cost        map[string]interface{}   `json:"cost"`
+	DryRun      bool                     `json:"dry_run"`
+	Log         string                   `json:"log"`
 }
 
 // Event is an edge emitted by a loop.
@@ -84,16 +84,22 @@ func Run(ctx context.Context, fleet *config.Fleet, loop *config.Loop, fleetDir s
 		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
 	}
 
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &out
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
-		return Result{Log: out.String()}, fmt.Errorf("loop %s: %w", loop.Name, err)
+		if stderr.Len() > 0 {
+			fmt.Fprint(os.Stderr, stderr.String())
+		}
+		return Result{Log: stdout.String()}, fmt.Errorf("loop %s: %w", loop.Name, err)
+	}
+	if stderr.Len() > 0 {
+		fmt.Fprint(os.Stderr, stderr.String())
 	}
 
 	res, err := parseOutputs(runDir)
-	res.Log = out.String()
+	res.Log = stdout.String()
 	if err != nil {
 		return res, fmt.Errorf("parse outputs: %w", err)
 	}
@@ -227,9 +233,9 @@ func mergeGHCost(cost map[string]interface{}, runDir string) map[string]interfac
 		return cost
 	}
 	type call struct {
-		Cmd     string `json:"cmd"`
-		Subcmd  string `json:"subcmd"`
-		At      string `json:"at"`
+		Cmd    string `json:"cmd"`
+		Subcmd string `json:"subcmd"`
+		At     string `json:"at"`
 	}
 	var calls []call
 	for _, line := range splitLines(data) {

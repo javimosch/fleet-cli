@@ -12,7 +12,7 @@ import (
 // cmdEmit triggers a named event and dispatches the matching `on` loops.
 func cmdEmit(args []string) int {
 	if len(args) < 2 {
-		fail("usage: fleet emit <fleet> <event> [--data <json>] [--dry-run]")
+		failCode(80, "invalid_arguments", "usage: fleet emit <fleet> <event> [--data <json>] [--dry-run]", "fleet help-json")
 	}
 	fleetName, eventName := args[0], args[1]
 
@@ -23,7 +23,7 @@ func cmdEmit(args []string) int {
 		switch a {
 		case "--data":
 			if i+1 >= len(args) {
-				fail("--data requires a JSON value")
+				failCode(80, "invalid_arguments", "--data requires a JSON value", "fleet help-json")
 			}
 			dataJSON = args[i+1]
 			i++
@@ -34,18 +34,18 @@ func cmdEmit(args []string) int {
 
 	fleet, fleetDir, err := loadFleet(fleetName)
 	if err != nil {
-		fail("load fleet: %v", err)
+		failCode(92, "resource_not_found", fmt.Sprintf("load fleet: %v", err), "fleet init --name <name> --repo <owner/name>")
 	}
 
 	st, q, err := openStores(fleet)
 	if err != nil {
-		fail("open stores: %v", err)
+		failCode(90, "state_unavailable", fmt.Sprintf("open stores: %v", err), "set FLEET_STATE_DIR to a writable directory")
 	}
 
 	data := map[string]interface{}{}
 	if dataJSON != "" {
 		if err := json.Unmarshal([]byte(dataJSON), &data); err != nil {
-			fail("parse --data JSON: %v", err)
+			failCode(85, "invalid_json", fmt.Sprintf("parse --data JSON: %v", err), "pass a JSON object to --data")
 		}
 	}
 	event := runner.Event{Name: eventName, Data: data}
@@ -55,7 +55,7 @@ func cmdEmit(args []string) int {
 
 	chain, err := runChainFromEvent(ctx, fleet, fleetDir, st, q, dryRun, event)
 	if err != nil {
-		fail("emit chain: %v", err)
+		failCode(105, "external_error", fmt.Sprintf("emit chain: %v", err), "retry the command after inspecting the loop error")
 	}
 
 	outputJSON(map[string]interface{}{

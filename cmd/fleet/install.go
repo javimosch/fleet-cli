@@ -26,17 +26,17 @@ func cmdInstall(args []string) int {
 		}
 	}
 	if len(positional) < 1 {
-		fail("usage: fleet install <fleet> [--system] [--no-start]")
+		failCode(80, "invalid_arguments", "usage: fleet install <fleet> [--system] [--no-start]", "fleet help-json")
 	}
 	fleetName := positional[0]
 	fleet, fleetDir, err := loadFleet(fleetName)
 	if err != nil {
-		fail("load fleet: %v", err)
+		failCode(92, "resource_not_found", fmt.Sprintf("load fleet: %v", err), "fleet init --name <name> --repo <owner/name>")
 	}
 
 	bin, err := binaryPath()
 	if err != nil {
-		fail("resolve fleet binary: %v", err)
+		failCode(110, "internal_error", fmt.Sprintf("resolve fleet binary: %v", err))
 	}
 
 	opts := systemd.Options{
@@ -46,11 +46,11 @@ func cmdInstall(args []string) int {
 		System:    system,
 	}
 	if err := systemd.Install(fleet, opts); err != nil {
-		fail("install units: %v", err)
+		failCode(90, "resource_unavailable", fmt.Sprintf("install units: %v", err), "inspect systemd availability and permissions")
 	}
 
 	if err := enableUnits(fleet, fleetName, system, !noStart); err != nil {
-		fail("enable units: %v", err)
+		failCode(100, "systemd_error", fmt.Sprintf("enable units: %v", err), "check systemctl status and retry deliberately")
 	}
 
 	paths, _ := systemd.UnitPaths(fleetName, fleet, system)
@@ -76,13 +76,13 @@ func cmdUninstall(args []string) int {
 		}
 	}
 	if len(positional) < 1 {
-		fail("usage: fleet uninstall <fleet> [--system]")
+		failCode(80, "invalid_arguments", "usage: fleet uninstall <fleet> [--system]", "fleet help-json")
 	}
 	fleetName := positional[0]
 	if err := systemd.Uninstall(fleetName, system); err != nil {
-		fail("uninstall units: %v", err)
+		failCode(90, "resource_unavailable", fmt.Sprintf("uninstall units: %v", err), "inspect systemd availability and permissions")
 	}
-	fmt.Printf("uninstalled fleet-%s units\n", fleetName)
+	outputJSON(map[string]interface{}{"ok": true, "uninstalled": true, "fleet": fleetName})
 	return 0
 }
 

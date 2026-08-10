@@ -27,6 +27,14 @@ func main() {
 	switch cmd {
 	case "help", "-h", "--help":
 		printHelp()
+	case "help-json", "--help-json":
+		os.Exit(cmdHelpJSON())
+	case "guide":
+		os.Exit(cmdGuide(tail))
+	case "version":
+		os.Exit(cmdVersion())
+	case "feedback":
+		os.Exit(cmdFeedback(tail))
 	case "init":
 		os.Exit(cmdInit(tail))
 	case "validate":
@@ -50,7 +58,7 @@ func main() {
 	case "uninstall":
 		os.Exit(cmdUninstall(tail))
 	default:
-		fail("unknown command: %s", cmd)
+		failCode(80, "unknown_command", fmt.Sprintf("unknown command: %s", cmd), "fleet help-json")
 	}
 }
 
@@ -71,20 +79,15 @@ Commands:
   state <fleet> set <key> <value>
   install <fleet> [--system] [--no-start]
   uninstall <fleet> [--system]
+  guide [--human]
+  help-json
+  version
+  feedback \"<message>\" [--kind bug|idea|praise|note] [--context <text>]
 
-Global flags:
-  -f <path>   fleet directory (default ./fleets/<name>)
-  --json      output JSON`)
-}
-
-func fail(format string, args ...interface{}) {
-	fmt.Fprintf(os.Stderr, "error: "+format+"\n", args...)
-	os.Exit(1)
-}
-
-func outputJSON(v interface{}) {
-	b, _ := json.MarshalIndent(v, "", "  ")
-	fmt.Println(string(b))
+Environment:
+  FLEET_DIR         fleet directory override
+  FLEET_STATE_DIR   state directory override
+  FEEDBACK_RELAY    feedback relay URL, or off`)
 }
 
 func fleetPath(name string) string {
@@ -138,29 +141,30 @@ func stateDir() string {
 
 // cmdInit scaffolds a new fleet directory.
 func cmdInit(args []string) int {
-	fs := flag.NewFlagSet("init", flag.ExitOnError)
+	fs := flag.NewFlagSet("init", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
 	name := fs.String("name", "", "fleet name")
 	repo := fs.String("repo", "", "target repo (owner/name)")
 	dir := fs.String("dir", "", "fleet directory (default ./fleets/<name>)")
 	if err := fs.Parse(args); err != nil {
-		fail("parse flags: %v", err)
+		failCode(80, "invalid_arguments", fmt.Sprintf("parse flags: %v", err))
 	}
 	if *name == "" || *repo == "" {
-		fail("--name and --repo are required")
+		failCode(82, "missing_required_argument", "--name and --repo are required", "fleet init --name <name> --repo <owner/name>")
 	}
 	fleetDir := *dir
 	if fleetDir == "" {
 		fleetDir = filepath.Join(".", "fleets", *name)
 	}
 	if err := os.MkdirAll(fleetDir, 0o755); err != nil {
-		fail("mkdir: %v", err)
+		failCode(90, "resource_unavailable", fmt.Sprintf("mkdir: %v", err), "choose a writable --dir")
 	}
 	if err := os.MkdirAll(filepath.Join(fleetDir, "loops"), 0o755); err != nil {
-		fail("mkdir loops: %v", err)
+		failCode(90, "resource_unavailable", fmt.Sprintf("mkdir loops: %v", err), "choose a writable --dir")
 	}
 	fleetYML := fmt.Sprintf(initFleetYML, *name, *repo)
 	if err := os.WriteFile(filepath.Join(fleetDir, "fleet.yml"), []byte(fleetYML), 0o644); err != nil {
-		fail("write fleet.yml: %v", err)
+		failCode(90, "resource_unavailable", fmt.Sprintf("write fleet.yml: %v", err), "choose a writable --dir")
 	}
 	// Placeholder observe loop.
 	observe := `#!/usr/bin/env bash
@@ -169,14 +173,14 @@ repo="${FLEET_REPO}"
 gh api "repos/$repo" --jq '{stars:.stargazers_count, forks:.forks_count, open_issues:.open_issues_count, updated_at:.updated_at}' > "$FLEET_RUN_DIR/result.json"
 `
 	writeLoop(fleetDir, "observe.sh", observe)
-	fmt.Printf("created fleet at %s\n", fleetDir)
+	outputJSON(map[string]interface{}{"ok": true, "created": true, "fleet_dir": fleetDir})
 	return 0
 }
 
 func writeLoop(fleetDir, name, body string) {
 	path := filepath.Join(fleetDir, "loops", name)
 	if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
-		fail("write %s: %v", name, err)
+		failCode(90, "resource_unavailable", fmt.Sprintf("write %s: %v", name, err), "choose a writable --dir")
 	}
 }
 
@@ -208,41 +212,40 @@ loops:
 // cmdValidate validates a fleet.yml.
 func cmdValidate(args []string) int {
 	if len(args) < 1 {
-		fail("usage: fleet validate <fleet>")
+		failCode(80, "invalid_arguments", "usage: fleet validate <fleet>", "fleet help-json")
 	}
 	_, _, err := loadFleet(args[0])
 	if err != nil {
-		fail("validate: %v", err)
+		failCode(82, "validation_error", fmt.Sprintf("validate: %v", err), "inspect fleet.yml")
 	}
-	fmt.Println("valid")
+	outputJSON(map[string]interface{}{"ok": true, "valid": true})
 	return 0
 }
 
 // cmdPlan prints the next expected run times.
 func cmdPlan(args []string) int {
 	if len(args) < 1 {
-		fail("usage: fleet plan <fleet>")
+		failCode(80, "invalid_arguments", "usage: fleet plan <fleet>", "fleet help-json")
 	}
 	fleet, _, err := loadFleet(args[0])
 	if err != nil {
-		fail("load fleet: %v", err)
+		failCode(92, "resource_not_found", fmt.Sprintf("load fleet: %v", err), "fleet init --name <name> --repo <owner/name>")
 	}
 	now := time.Now()
 	var rows []map[string]interface{}
 	for _, l := range fleet.Loops {
 		next, _ := l.NextRun(now)
 		rows = append(rows, map[string]interface{}{
-			"loop":      l.Name,
-			"schedule":  l.Schedule,
-			"next_run":  next.Format(time.RFC3339),
-			"outbound":  l.Outbound,
-			"rate":      l.Rate,
+			"loop":     l.Name,
+			"schedule": l.Schedule,
+			"next_run": next.Format(time.RFC3339),
+			"outbound": l.Outbound,
+			"rate":     l.Rate,
 		})
 	}
 	outputJSON(rows)
 	return 0
 }
-
 
 func status(err error) string {
 	if err == nil {
@@ -257,25 +260,25 @@ func status(err error) string {
 // cmdStatus shows fleet state and recent runs.
 func cmdStatus(args []string) int {
 	if len(args) < 1 {
-		fail("usage: fleet status <fleet>")
+		failCode(80, "invalid_arguments", "usage: fleet status <fleet>", "fleet help-json")
 	}
 	fleet, _, err := loadFleet(args[0])
 	if err != nil {
-		fail("load fleet: %v", err)
+		failCode(92, "resource_not_found", fmt.Sprintf("load fleet: %v", err), "fleet init --name <name> --repo <owner/name>")
 	}
 	st, q, err := openStores(fleet)
 	if err != nil {
-		fail("open stores: %v", err)
+		failCode(90, "state_unavailable", fmt.Sprintf("open stores: %v", err), "set FLEET_STATE_DIR to a writable directory")
 	}
 	pending, _ := q.List(hitl.Pending)
 	approved, _ := q.List(hitl.Approved)
 	rejected, _ := q.List(hitl.Rejected)
 	outputJSON(map[string]interface{}{
-		"fleet":     fleet.Name,
-		"state":     st.All(),
-		"pending":   len(pending),
-		"approved":  len(approved),
-		"rejected":  len(rejected),
+		"fleet":    fleet.Name,
+		"state":    st.All(),
+		"pending":  len(pending),
+		"approved": len(approved),
+		"rejected": len(rejected),
 	})
 	return 0
 }
@@ -283,19 +286,19 @@ func cmdStatus(args []string) int {
 // cmdQueue lists pending proposals.
 func cmdQueue(args []string) int {
 	if len(args) < 1 {
-		fail("usage: fleet queue <fleet>")
+		failCode(80, "invalid_arguments", "usage: fleet queue <fleet>", "fleet help-json")
 	}
 	fleet, _, err := loadFleet(args[0])
 	if err != nil {
-		fail("load fleet: %v", err)
+		failCode(92, "resource_not_found", fmt.Sprintf("load fleet: %v", err), "fleet init --name <name> --repo <owner/name>")
 	}
 	_, q, err := openStores(fleet)
 	if err != nil {
-		fail("open stores: %v", err)
+		failCode(90, "state_unavailable", fmt.Sprintf("open stores: %v", err), "set FLEET_STATE_DIR to a writable directory")
 	}
 	proposals, err := q.List("")
 	if err != nil {
-		fail("list queue: %v", err)
+		failCode(90, "queue_unavailable", fmt.Sprintf("list queue: %v", err), "check FLEET_STATE_DIR")
 	}
 	outputJSON(proposals)
 	return 0
@@ -318,23 +321,23 @@ func cmdDecision(decision string, args []string) int {
 		clean = append(clean, a)
 	}
 	if len(clean) < 2 {
-		fail("usage: fleet %s <fleet> <proposal-id> [--reason <reason>]", decision)
+		failCode(80, "invalid_arguments", fmt.Sprintf("usage: fleet %s <fleet> <proposal-id> [--reason <reason>]", decision), "fleet help-json")
 	}
 	fleetName, proposalID := clean[0], clean[1]
 	fleet, _, err := loadFleet(fleetName)
 	if err != nil {
-		fail("load fleet: %v", err)
+		failCode(92, "resource_not_found", fmt.Sprintf("load fleet: %v", err), "fleet init --name <name> --repo <owner/name>")
 	}
 	_, q, err := openStores(fleet)
 	if err != nil {
-		fail("open stores: %v", err)
+		failCode(90, "state_unavailable", fmt.Sprintf("open stores: %v", err), "set FLEET_STATE_DIR to a writable directory")
 	}
 	st := hitl.Approved
 	if decision == "reject" {
 		st = hitl.Rejected
 	}
 	if err := q.UpdateStatus(proposalID, st, reason, "cli"); err != nil {
-		fail("update status: %v", err)
+		failCode(92, "proposal_not_found", fmt.Sprintf("update status: %v", err), "fleet queue <fleet>")
 	}
 
 	// Best-effort cuzz notification.
@@ -346,52 +349,52 @@ func cmdDecision(decision string, args []string) int {
 		"approver":    "cli",
 	})
 
-	fmt.Printf("%s %s\n", decision, proposalID)
+	outputJSON(map[string]interface{}{"ok": true, "decision": decision, "proposal_id": proposalID})
 	return 0
 }
 
 // cmdState reads or writes state keys.
 func cmdState(args []string) int {
 	if len(args) < 2 {
-		fail("usage: fleet state <fleet> get <key> | set <key> <value>")
+		failCode(80, "invalid_arguments", "usage: fleet state <fleet> get <key> | set <key> <value>", "fleet help-json")
 	}
 	fleetName := args[0]
 	fleet, _, err := loadFleet(fleetName)
 	if err != nil {
-		fail("load fleet: %v", err)
+		failCode(92, "resource_not_found", fmt.Sprintf("load fleet: %v", err), "fleet init --name <name> --repo <owner/name>")
 	}
 	st, _, err := openStores(fleet)
 	if err != nil {
-		fail("open stores: %v", err)
+		failCode(90, "state_unavailable", fmt.Sprintf("open stores: %v", err), "set FLEET_STATE_DIR to a writable directory")
 	}
 	sub := args[1]
 	switch sub {
 	case "get":
 		if len(args) < 3 {
-			fail("state get <key>")
+			failCode(80, "invalid_arguments", "state get <key>", "fleet help-json")
 		}
 		v, ok := st.Get(args[2])
 		if !ok {
-			fmt.Println("null")
+			outputJSON(nil)
 			return 0
 		}
 		outputJSON(v)
 	case "set":
 		if len(args) < 4 {
-			fail("state set <key> <value>")
+			failCode(80, "invalid_arguments", "state set <key> <value>", "fleet help-json")
 		}
 		var value interface{}
 		if err := json.Unmarshal([]byte(args[3]), &value); err != nil {
 			value = args[3]
 		}
 		if err := st.Set(args[2], value); err != nil {
-			fail("set: %v", err)
+			failCode(90, "state_unavailable", fmt.Sprintf("set: %v", err), "set FLEET_STATE_DIR to a writable directory")
 		}
-		fmt.Println("ok")
+		outputJSON(map[string]interface{}{"ok": true})
 	case "all":
 		outputJSON(st.All())
 	default:
-		fail("unknown state subcommand: %s", sub)
+		failCode(80, "invalid_arguments", fmt.Sprintf("unknown state subcommand: %s", sub), "fleet help-json")
 	}
 	return 0
 }
