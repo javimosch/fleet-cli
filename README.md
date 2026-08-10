@@ -133,6 +133,25 @@ Rate-limit notes are attached to each cost record. GitHub's public API is free i
 
 Run costs are also accumulated in state under `costs`, so `./fleet state machin-growth get costs` returns a ledger.
 
+## Cuzz channel integration
+
+`fleet.yml` can declare `channels` with `kind: cuzz`. When configured, the runner sends:
+
+- `ops` channel: every loop completion, HITL proposals waiting for approval, approve/reject decisions
+- `alerts` channel: loop failures and non-ok statuses
+
+The cuzz binary must be on `PATH` or set via `FLEET_CUZZ_BIN`. The cuzz relay is configured through the normal cuzz environment (`CUZZ_URL`, `CUZZ_TOKEN`, `CUZZ_AGENT`). The send has a 5-second timeout so a slow relay can never block a loop.
+
+```yaml
+channels:
+  ops:
+    kind: cuzz
+    channel: machin-growth
+  alerts:
+    kind: cuzz
+    channel: machin-alerts
+```
+
 ## Design notes
 
 - Go binary stays small and dumb; domain logic lives in `loops/*.sh`.

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/javimosch/fleet-cli/internal/channels"
 	"github.com/javimosch/fleet-cli/internal/config"
 	"github.com/javimosch/fleet-cli/internal/hitl"
 	"github.com/javimosch/fleet-cli/internal/state"
@@ -302,16 +303,24 @@ func cmdQueue(args []string) int {
 
 // cmdDecision approves or rejects a proposal.
 func cmdDecision(decision string, args []string) int {
-	fs := flag.NewFlagSet(decision, flag.ContinueOnError)
-	reason := fs.String("reason", "", "reason for decision")
-	if err := fs.Parse(args); err != nil {
-		fail("parse flags: %v", err)
+	// Extract --reason manually so it can appear before or after positional args.
+	reason := ""
+	clean := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--reason" {
+			if i+1 < len(args) {
+				reason = args[i+1]
+				i++
+			}
+			continue
+		}
+		clean = append(clean, a)
 	}
-	remaining := fs.Args()
-	if len(remaining) < 2 {
-		fail("usage: fleet %s <fleet> <proposal-id>", decision)
+	if len(clean) < 2 {
+		fail("usage: fleet %s <fleet> <proposal-id> [--reason <reason>]", decision)
 	}
-	fleetName, proposalID := remaining[0], remaining[1]
+	fleetName, proposalID := clean[0], clean[1]
 	fleet, _, err := loadFleet(fleetName)
 	if err != nil {
 		fail("load fleet: %v", err)
@@ -324,9 +333,19 @@ func cmdDecision(decision string, args []string) int {
 	if decision == "reject" {
 		st = hitl.Rejected
 	}
-	if err := q.UpdateStatus(proposalID, st, *reason, "cli"); err != nil {
+	if err := q.UpdateStatus(proposalID, st, reason, "cli"); err != nil {
 		fail("update status: %v", err)
 	}
+
+	// Best-effort cuzz notification.
+	m := channels.NewManager(fleet)
+	_ = m.Send("ops", "decision", fmt.Sprintf("%s %s", decision, proposalID), map[string]interface{}{
+		"proposal_id": proposalID,
+		"decision":    decision,
+		"reason":      reason,
+		"approver":    "cli",
+	})
+
 	fmt.Printf("%s %s\n", decision, proposalID)
 	return 0
 }
