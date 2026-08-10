@@ -157,6 +157,14 @@ func unitName(fleet, loop string) string {
 }
 
 func renderService(name string, opts Options, fleetName string, loop config.Loop) string {
+	home := os.Getenv("HOME")
+	if home == "" {
+		home, _ = os.UserHomeDir()
+	}
+	if home == "" {
+		home = "/"
+	}
+
 	bin := opts.Binary
 	if bin == "" {
 		bin = "fleet"
@@ -192,9 +200,10 @@ Type=%s
 ExecStart=%s run %s %s
 WorkingDirectory=%s
 Environment="PATH=/usr/local/bin:/usr/bin:/bin"
+Environment="HOME=%s"
 Environment="FLEET_DIR=%s"
 %s%sEnvironmentFile=-/etc/default/fleet-cli
-%s`, name, fleetName, serviceType, bin, fleetName, loop.Name, opts.FleetDir, opts.FleetDir, extra, loopEnv, install)
+%s`, name, fleetName, serviceType, bin, fleetName, loop.Name, opts.FleetDir, home, opts.FleetDir, extra, loopEnv, install)
 }
 
 func renderTimer(name, trigger string, loop config.Loop) string {

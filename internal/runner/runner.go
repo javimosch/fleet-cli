@@ -269,7 +269,14 @@ func mergeGHCost(cost map[string]interface{}, runDir string) map[string]interfac
 func stateDir() string {
 	d := os.Getenv("FLEET_STATE_DIR")
 	if d == "" {
-		d = filepath.Join(os.Getenv("HOME"), ".local", "share", "fleet-cli")
+		home := os.Getenv("HOME")
+		if home == "" && os.Getuid() == 0 {
+			home = "/root"
+		}
+		if home == "" {
+			home = "."
+		}
+		d = filepath.Join(home, ".local", "share", "fleet-cli")
 	}
 	return d
 }
