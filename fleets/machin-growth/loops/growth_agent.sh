@@ -35,14 +35,27 @@ existing_targets() {
 }
 
 # Run prospect child in its own run dir so it updates state without
-# shadowing this loop's outputs.
+# shadowing this loop's outputs. If the child returns an empty prospect list
+# (e.g. GitHub rate limit), restore the previous list so the agent can still
+# act on the last known good set.
 refresh_prospects() {
   local child_dir="$run_dir/prospect-child"
   mkdir -p "$child_dir"
+
+  local old_prospects
+  old_prospects=$(jq -r '.prospects // []' "$state_file" 2>/dev/null || echo '[]')
+
   FLEET_RUN_DIR="$child_dir" \
   FLEET_STATE_FILE="$state_file" \
   FLEET_DRY_RUN="${FLEET_DRY_RUN:-false}" \
     bash "$fleet_dir/loops/prospect.sh" >/dev/null 2>&1 || true
+
+  local new_prospects
+  new_prospects=$(jq -r '.prospects // []' "$state_file" 2>/dev/null || echo '[]')
+  if [[ $(echo "$new_prospects" | jq 'length') -eq 0 && $(echo "$old_prospects" | jq 'length') -gt 0 ]]; then
+    jq --argjson old "$old_prospects" '.prospects = $old' "$state_file" > "$run_dir/state-restore.json" && \
+      mv "$run_dir/state-restore.json" "$state_file"
+  fi
 }
 
 # Pick the highest-scored prospect whose target isn't already in the queue.
