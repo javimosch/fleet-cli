@@ -14,6 +14,7 @@ go build -o fleet ./cmd/fleet
 ./fleet run machin-growth prospect
 ./fleet run machin-growth draft
 ./fleet queue machin-growth
+./fleet guide
 ```
 
 ## Commands
@@ -30,7 +31,7 @@ go build -o fleet ./cmd/fleet
 | `approve <fleet> <proposal-id>` | Approve an outbound proposal |
 | `reject <fleet> <proposal-id>` | Reject an outbound proposal |
 | `state <fleet> get/set/all` | Inspect or mutate state |
-| `execute <fleet>` | Execute approved actions (live requires `FLEET_LIVE=1`) |
+| `run <fleet> execute` | Execute approved actions (live requires `FLEET_LIVE=1`) |
 | `install <fleet> [--system] [--no-start]` | Render and enable systemd timers |
 | `uninstall <fleet> [--system]` | Remove systemd timers and services |
 
@@ -166,6 +167,25 @@ loops:
 ```
 
 `fleet install` writes a `Type=simple` service with `RuntimeMaxSec=3600`, `Restart=always`, and `RestartSec=10`. The runner uses `runtime_max` as the default timeout for `fleet run <fleet> agent`, so the process exits cleanly before systemd would hard-kill it.
+
+## Agent-First CLI contract
+
+`fleet-cli` follows the Agent-First CLI conventions for a pure command-line tool:
+
+- `fleet help-json` exposes the machine-readable command catalog, environment variables, and semantic exit-code ranges.
+- `fleet guide` emits the embedded operating model as JSON; `fleet guide --human` renders a concise Markdown guide without network access.
+- Successful command data is JSON on stdout. Progress, loop stderr, and feedback delivery notes go to stderr.
+- Typed errors use semantic exit codes: `80–89` input, `90–99` resource/precondition, `100–109` external/integration, `110–119` internal.
+- `fleet feedback "..." --kind bug` is a relay-only, best-effort report for this pure CLI. It always exits successfully after generating one idempotency key; set `FEEDBACK_RELAY=off` to disable delivery.
+- Telemetry is intentionally not enabled: fleet-cli is infrastructure tooling and does not need an adoption signal.
+
+```sh
+fleet help-json | jq '.commands | keys'
+fleet guide | jq '.guide.loop'
+FEEDBACK_RELAY=off fleet feedback "the loop failed" --kind bug
+```
+
+Tagged releases publish static binaries for Linux and macOS on amd64 and arm64.
 
 ## Design notes
 
