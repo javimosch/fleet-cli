@@ -57,7 +57,8 @@ func cmdRun(args []string) int {
 		fail("open stores: %v", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	loop := fleet.GetLoop(loopName)
+	ctx, cancel := loopContext(loop, fleet)
 	defer cancel()
 
 	if noChain {
@@ -155,4 +156,29 @@ func contains(list []string, s string) bool {
 		}
 	}
 	return false
+}
+
+// loopContext returns a context with the loop's timeout, or a background context for zero timeouts.
+func loopContext(loop *config.Loop, fleet *config.Fleet) (context.Context, context.CancelFunc) {
+	d := loop.TimeoutDuration(fleet.Defaults)
+	if d <= 0 {
+		return context.Background(), func() {}
+	}
+	return context.WithTimeout(context.Background(), d)
+}
+
+// fleetContext returns a context sized for the longest loop in the fleet,
+// used for event chains that may run any listener.
+func fleetContext(fleet *config.Fleet) (context.Context, context.CancelFunc) {
+	var d time.Duration
+	for _, l := range fleet.Loops {
+		td := l.TimeoutDuration(fleet.Defaults)
+		if td > d {
+			d = td
+		}
+	}
+	if d <= 0 {
+		return context.Background(), func() {}
+	}
+	return context.WithTimeout(context.Background(), d)
 }

@@ -32,11 +32,11 @@ func Install(fleet *config.Fleet, opts Options) error {
 	}
 
 	for _, loop := range fleet.Loops {
-		if loop.Schedule == "" && len(loop.On) == 0 {
+		if loop.Schedule == "" && len(loop.On) == 0 && loop.Mode != "daemon" {
 			continue
 		}
 		name := unitName(fleet.Name, loop.Name)
-		service := renderService(name, opts, fleet.Name, loop.Name)
+		service := renderService(name, opts, fleet.Name, loop)
 		if err := os.WriteFile(filepath.Join(dir, name+".service"), []byte(service), 0o644); err != nil {
 			return err
 		}
@@ -65,10 +65,11 @@ func Uninstall(fleetName string, system bool) error {
 	}
 	prefix := "fleet-" + fleetName + "-"
 
-	// Disable first so symlinks in *.wants are removed.
+	// Stop and disable first so symlinks in *.wants are removed and daemon services terminate.
 	if files, err := os.ReadDir(dir); err == nil {
 		for _, e := range files {
-			if strings.HasPrefix(e.Name(), prefix) && strings.HasSuffix(e.Name(), ".timer") {
+			if strings.HasPrefix(e.Name(), prefix) && (strings.HasSuffix(e.Name(), ".timer") || strings.HasSuffix(e.Name(), ".service")) {
+				_ = stopUnit(e.Name(), system)
 				_ = disableUnit(e.Name(), system)
 			}
 		}
@@ -99,6 +100,16 @@ func disableUnit(name string, system bool) error {
 	return cmd.Run()
 }
 
+func stopUnit(name string, system bool) error {
+	scope := "--user"
+	if system {
+		scope = "--system"
+	}
+	cmd := exec.Command("systemctl", scope, "stop", name)
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
 // UnitPaths returns the paths where units were written.
 func UnitPaths(fleetName string, fleet *config.Fleet, system bool) ([]string, error) {
 	dir, err := unitDir(system)
@@ -107,7 +118,7 @@ func UnitPaths(fleetName string, fleet *config.Fleet, system bool) ([]string, er
 	}
 	var paths []string
 	for _, loop := range fleet.Loops {
-		if loop.Schedule == "" && len(loop.On) == 0 {
+		if loop.Schedule == "" && len(loop.On) == 0 && loop.Mode != "daemon" {
 			continue
 		}
 		name := unitName(fleetName, loop.Name)
@@ -145,21 +156,39 @@ func unitName(fleet, loop string) string {
 	return fmt.Sprintf("fleet-%s-%s", fleet, loop)
 }
 
-func renderService(name string, opts Options, fleetName, loopName string) string {
+func renderService(name string, opts Options, fleetName string, loop config.Loop) string {
 	bin := opts.Binary
 	if bin == "" {
 		bin = "fleet"
 	}
+	if loop.Mode == "" {
+		loop.Mode = "oneshot"
+	}
+
+	serviceType := "oneshot"
+	extra := ""
+	install := ""
+	if loop.Mode == "daemon" {
+		serviceType = "simple"
+		secs := int(loop.RuntimeMaxDuration().Seconds())
+		extra = fmt.Sprintf("RuntimeMaxSec=%d\nRestart=always\nRestartSec=10\n", secs)
+		target := "default.target"
+		if opts.System {
+			target = "multi-user.target"
+		}
+		install = fmt.Sprintf("\n[Install]\nWantedBy=%s\n", target)
+	}
+
 	return fmt.Sprintf(`[Unit]
 Description=Fleet loop %s for %s
 
 [Service]
-Type=oneshot
+Type=%s
 ExecStart=%s run %s %s
 WorkingDirectory=%s
 Environment="PATH=/usr/local/bin:/usr/bin:/bin"
 Environment="FLEET_DIR=%s"
-`, name, fleetName, bin, fleetName, loopName, opts.FleetDir, opts.FleetDir)
+%s%s`, name, fleetName, serviceType, bin, fleetName, loop.Name, opts.FleetDir, opts.FleetDir, extra, install)
 }
 
 func renderTimer(name, trigger string, loop config.Loop) string {

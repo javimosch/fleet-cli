@@ -2,11 +2,9 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"os"
-	"time"
 
 	"github.com/javimosch/fleet-cli/internal/runner"
 )
@@ -52,7 +50,7 @@ func cmdEmit(args []string) int {
 	}
 	event := runner.Event{Name: eventName, Data: data}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := fleetContext(fleet)
 	defer cancel()
 
 	chain, err := runChainFromEvent(ctx, fleet, fleetDir, st, q, dryRun, event)
