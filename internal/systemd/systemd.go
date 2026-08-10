@@ -179,6 +179,11 @@ func renderService(name string, opts Options, fleetName string, loop config.Loop
 		install = fmt.Sprintf("\n[Install]\nWantedBy=%s\n", target)
 	}
 
+	loopEnv := ""
+	for k, v := range loop.Env {
+		loopEnv += fmt.Sprintf("Environment=\"%s=%s\"\n", k, v)
+	}
+
 	return fmt.Sprintf(`[Unit]
 Description=Fleet loop %s for %s
 
@@ -188,7 +193,8 @@ ExecStart=%s run %s %s
 WorkingDirectory=%s
 Environment="PATH=/usr/local/bin:/usr/bin:/bin"
 Environment="FLEET_DIR=%s"
-%s%s`, name, fleetName, serviceType, bin, fleetName, loop.Name, opts.FleetDir, opts.FleetDir, extra, install)
+%s%sEnvironmentFile=-/etc/default/fleet-cli
+%s`, name, fleetName, serviceType, bin, fleetName, loop.Name, opts.FleetDir, opts.FleetDir, extra, loopEnv, install)
 }
 
 func renderTimer(name, trigger string, loop config.Loop) string {
