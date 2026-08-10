@@ -50,15 +50,17 @@ events=$(echo "$candidates" | jq --arg dry "$dry" -c '
 ')
 
 # Record dispatched IDs in state so we don't re-emit them.
-ids=$(echo "$candidates" | jq -r '[.[].id // empty]')
-
-cat > "$run_dir/state.json" <<EOF
+# Never record in a dry-run; otherwise a non-dry run later would skip them.
+if [[ "$dry" != "true" ]]; then
+  ids=$(echo "$candidates" | jq -r '[.[].id // empty]')
+  dispatched_map=$(jq -r '(.dispatched // {})' "$state_file" 2>/dev/null || echo '{}')
+  updated_dispatched=$(echo "$dispatched_map" | jq --arg today "$today" --argjson ids "$ids" '.[$today] = $ids')
+  cat > "$run_dir/state.json" <<EOF
 {
-  "dispatched": {
-    "$today": $ids
-  }
+  "dispatched": $updated_dispatched
 }
 EOF
+fi
 
 cat > "$run_dir/result.json" <<EOF
 {
