@@ -54,7 +54,10 @@ type HITL struct {
 type Loop struct {
 	Name             string            `yaml:"name"`
 	Command          string            `yaml:"command"`
+	Mode             string            `yaml:"mode"`
+	Timeout          string            `yaml:"timeout"`
 	Schedule         string            `yaml:"schedule"`
+	RuntimeMax       string            `yaml:"runtime_max"`
 	On               []string          `yaml:"on"`
 	Outbound         bool              `yaml:"outbound"`
 	RequiresApproval bool              `yaml:"requires_approval"`
@@ -113,6 +116,28 @@ func (f *Fleet) Validate() error {
 		if l.Command == "" {
 			return fmt.Errorf("loop %s: command is required", l.Name)
 		}
+		if l.Mode == "" {
+			l.Mode = "oneshot"
+		}
+		if l.Mode != "oneshot" && l.Mode != "daemon" {
+			return fmt.Errorf("loop %s: mode must be oneshot or daemon", l.Name)
+		}
+		if l.Mode == "daemon" && l.Schedule != "" {
+			return fmt.Errorf("loop %s: daemon loops cannot have a schedule", l.Name)
+		}
+		if l.Mode == "daemon" && l.RuntimeMax == "" {
+			return fmt.Errorf("loop %s: daemon loops must set runtime_max", l.Name)
+		}
+		if l.RuntimeMax != "" {
+			if _, err := time.ParseDuration(l.RuntimeMax); err != nil {
+				return fmt.Errorf("loop %s: invalid runtime_max %q: %w", l.Name, l.RuntimeMax, err)
+			}
+		}
+		if l.Timeout != "" {
+			if _, err := time.ParseDuration(l.Timeout); err != nil {
+				return fmt.Errorf("loop %s: invalid timeout %q: %w", l.Name, l.Timeout, err)
+			}
+		}
 		if l.Outbound && !l.RequiresApproval {
 			return fmt.Errorf("loop %s: outbound loops must set requires_approval: true", l.Name)
 		}
@@ -128,6 +153,38 @@ func (f *Fleet) GetLoop(name string) *Loop {
 		}
 	}
 	return nil
+}
+
+// TimeoutDuration resolves the loop timeout, falling back to fleet defaults.
+// Daemon loops fall back to runtime_max so `fleet run` exits before systemd kills them.
+func (l *Loop) TimeoutDuration(defaults Defaults) time.Duration {
+	s := l.Timeout
+	if s == "" && l.Mode == "daemon" {
+		s = l.RuntimeMax
+	}
+	if s == "" {
+		s = defaults.Timeout
+	}
+	if s == "" {
+		return 5 * time.Minute
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return 5 * time.Minute
+	}
+	return d
+}
+
+// RuntimeMaxDuration returns the daemon runtime_max duration, or zero.
+func (l *Loop) RuntimeMaxDuration() time.Duration {
+	if l.RuntimeMax == "" {
+		return 0
+	}
+	d, err := time.ParseDuration(l.RuntimeMax)
+	if err != nil {
+		return 0
+	}
+	return d
 }
 
 // NextRun parses a simple schedule string into the next occurrence.

@@ -152,6 +152,21 @@ channels:
     channel: machin-alerts
 ```
 
+## Long-running daemon loops
+
+A loop can run as a systemd service and be restarted on a `runtime_max` cadence (e.g. every 1h) to limit memory growth:
+
+```yaml
+loops:
+  - name: agent
+    mode: daemon
+    runtime_max: 1h
+    command: ./loops/agent.sh
+    outbound: false
+```
+
+`fleet install` writes a `Type=simple` service with `RuntimeMaxSec=3600`, `Restart=always`, and `RestartSec=10`. The runner uses `runtime_max` as the default timeout for `fleet run <fleet> agent`, so the process exits cleanly before systemd would hard-kill it.
+
 ## Design notes
 
 - Go binary stays small and dumb; domain logic lives in `loops/*.sh`.

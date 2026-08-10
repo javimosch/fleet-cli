@@ -49,8 +49,8 @@ func cmdInstall(args []string) int {
 		fail("install units: %v", err)
 	}
 
-	if err := enableTimers(fleet, fleetName, system, !noStart); err != nil {
-		fail("enable timers: %v", err)
+	if err := enableUnits(fleet, fleetName, system, !noStart); err != nil {
+		fail("enable units: %v", err)
 	}
 
 	paths, _ := systemd.UnitPaths(fleetName, fleet, system)
@@ -86,14 +86,26 @@ func cmdUninstall(args []string) int {
 	return 0
 }
 
-// enableTimers enables (and optionally starts) all timers for a fleet.
-func enableTimers(fleet *config.Fleet, fleetName string, system bool, start bool) error {
+// enableUnits enables (and optionally starts) all timers and daemon services for a fleet.
+func enableUnits(fleet *config.Fleet, fleetName string, system bool, start bool) error {
 	scope := "--user"
 	if system {
 		scope = "--system"
 	}
 
 	for _, loop := range fleet.Loops {
+		if loop.Mode == "daemon" {
+			name := fmt.Sprintf("fleet-%s-%s.service", fleetName, loop.Name)
+			cmd := exec.Command("systemctl", scope, "enable", name)
+			cmd.Stderr = os.Stderr
+			if err := cmd.Run(); err != nil {
+				return fmt.Errorf("enable %s: %w", name, err)
+			}
+			if start {
+				_ = exec.Command("systemctl", scope, "start", name).Run()
+			}
+			continue
+		}
 		if loop.Schedule == "" {
 			continue
 		}
