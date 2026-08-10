@@ -12,8 +12,8 @@ fleet_dir="${FLEET_DIR:-.}"
 mkdir -p "$run_dir"
 
 model="${AGENT_MODEL:-glm-5-2}"
-cycles=4
-sleep_min=15
+cycles="${AGENT_CYCLES:-4}"
+sleep_min="${AGENT_SLEEP_MIN:-15}"
 timeout_sec=120
 proposals=0
 dry="${FLEET_DRY_RUN:-false}"
