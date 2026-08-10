@@ -17,6 +17,7 @@ sleep_min=15
 timeout_sec=120
 proposals=0
 dry="${FLEET_DRY_RUN:-false}"
+proposed_targets=()
 
 if [[ "$dry" == "true" ]]; then
   sleep_min=1
@@ -62,6 +63,9 @@ refresh_prospects() {
 pick_top() {
   local excl
   excl=$(existing_targets)
+  for t in "${proposed_targets[@]}"; do
+    excl="$excl"$'\n'"$t"
+  done
   if [[ -n "$state_file" && -f "$state_file" ]]; then
     jq -r --arg exclude "$excl" '
       ($exclude | split("\n") | map(select(. != ""))) as $xs |
@@ -167,6 +171,7 @@ EOF
     }' >> "$run_dir/proposals.jsonl"
 
   proposals=$((proposals + 1))
+  proposed_targets+=("$target")
   echo "agent: queued proposal for $target" >&2
 
   if [[ $i -lt $cycles ]]; then
