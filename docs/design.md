@@ -32,8 +32,8 @@ It demonstrates the framework without violating GitHub ToS or being spammy.
 
 - <s>`fleet install` / `fleet uninstall` — render systemd user timers.</s> Done.
 - `fleet report` — publish a hart dashboard.
-- `fleet emit` — trigger event edges manually.
-- Event-driven scheduling: a loop with `on: [event]` runs when the event fires.
+- <s>`fleet emit` — trigger event edges manually.</s> Done.
+- <s>Event-driven scheduling: a loop with `on: [event]` runs when the event fires.</s> Done via `run` chaining and `fleet emit`.
 - Token-bucket rate limiter in the binary, not just the loop scripts.
 - SQLite backend for production use.
 - Merge into `am` / `am-cloud` as `am fleet`.
