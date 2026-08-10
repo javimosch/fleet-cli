@@ -59,6 +59,15 @@ loops:
       max_per_day: 10
     emits: [proposal.dispatched]
 
+  - name: execute
+    command: ./loops/execute.sh
+    outbound: true
+    requires_approval: true
+    rate:
+      max_per_run: 2
+      max_per_day: 10
+    emits: [action.executed]
+
   - name: report
     schedule: "daily@20:00"
     command: ./loops/report.sh

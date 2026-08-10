@@ -29,6 +29,7 @@ go build -o fleet ./cmd/fleet
 | `approve <fleet> <proposal-id>` | Approve an outbound proposal |
 | `reject <fleet> <proposal-id>` | Reject an outbound proposal |
 | `state <fleet> get/set/all` | Inspect or mutate state |
+| `execute <fleet>` | Execute approved actions (live requires `FLEET_LIVE=1`) |
 | `install <fleet> [--system] [--no-start]` | Render and enable systemd timers |
 | `uninstall <fleet> [--system]` | Remove systemd timers and services |
 
@@ -93,13 +94,15 @@ The included `fleets/machin-growth` is a dry-run, ToS-safe star-growth fleet for
 - `observe` records the current star count from the GitHub API.
 - `prospect` searches GitHub issues for relevant single/static binary discussions.
 - `draft` turns the highest-scored prospects into comment proposals.
-- `dispatch` (when run with `--dry-run`) prints what it would post; in live mode it would require manual HITL approval first.
+- `dispatch` emits `action.approved` events and queues them in `pending_actions`.
+- `execute` runs queued actions through `handlers/<kind>.sh` so the fleet stays generic.
 
-It never posts, stars, or messages anyone automatically. All outbound actions must be approved through `fleet approve`.
+It never posts, stars, or messages anyone automatically. All outbound actions must be approved through `fleet approve` and executed through `fleet run <fleet> execute` with `FLEET_LIVE=1`.
 
 ## Design notes
 
 - Go binary stays small and dumb; domain logic lives in `loops/*.sh`.
+- Outbound execution is fleet-specific: `execute` dispatches to `handlers/<kind>.sh`.
 - JSON-by-default output, agent-friendly exit codes.
 - Per-loop budgets and per-target cooldowns are enforced in `fleet.yml`; the dispatch loop also tracks dispatched IDs in state.
 - See `docs/design.md` for the long-term plan.

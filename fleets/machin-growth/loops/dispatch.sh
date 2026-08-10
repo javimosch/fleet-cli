@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# dispatch.sh — emit approved actions so an agent or human can execute them.
+# dispatch.sh — emit approved actions and queue them for execution.
 set -euo pipefail
 
 state_file="${FLEET_STATE_FILE:-}"
@@ -49,21 +49,28 @@ events=$(echo "$candidates" | jq --arg dry "$dry" -c '
   })
 ')
 
-# Record dispatched IDs in state so we don't re-emit them.
-# Never record in a dry-run; otherwise a non-dry run later would skip them.
-if [[ "$dry" != "true" ]]; then
-  ids=$(echo "$candidates" | jq -r '[.[].id // empty]')
-  dispatched_map=$(jq -r '(.dispatched // {})' "$state_file" 2>/dev/null || echo '{}')
-  updated_dispatched=$(echo "$dispatched_map" | jq --arg today "$today" --argjson ids "$ids" '.[$today] = $ids')
-  cat > "$run_dir/state.json" <<EOF
-{
-  "dispatched": $updated_dispatched
-}
-EOF
-fi
+# Record dispatched IDs and append actions to the pending queue for execution.
+# Dry-run must not touch state.
+ids=$(echo "$candidates" | jq -r '[.[].id // empty]')
+dispatched_map=$(jq -r '(.dispatched // {})' "$state_file" 2>/dev/null || echo '{}')
+updated_dispatched=$(echo "$dispatched_map" | jq --arg today "$today" --argjson ids "$ids" '.[$today] = $ids')
 
-cat > "$run_dir/result.json" <<EOF
+if [[ "$dry" == "true" ]]; then
+  cat > "$run_dir/result.json" <<EOF
 {
   "events": $events
 }
 EOF
+else
+  cat > "$run_dir/result.json" <<EOF
+{
+  "events": $events,
+  "state_set": {
+    "dispatched": $updated_dispatched
+  },
+  "state_append": {
+    "pending_actions": $candidates
+  }
+}
+EOF
+fi
