@@ -90,13 +90,17 @@ func runOneLoop(ctx context.Context, fleet *config.Fleet, fleetDir string, st *s
 	started := time.Now()
 	res, err := runner.Run(ctx, fleet, loop, fleetDir, st, q, dryRun)
 	finished := time.Now()
+	logText := res.Log
+	if err != nil {
+		logText = logText + "\n" + err.Error()
+	}
 	lo := loopOutput{
 		Loop:      loopName,
 		Status:    status(err),
 		DryRun:    dryRun,
 		Events:    res.Events,
 		Proposals: len(res.Proposals),
-		Log:       res.Log,
+		Log:       logText,
 		Cost:      res.Cost,
 	}
 	_ = st.RunRecord(loopName, lo.Status, started, finished, map[string]interface{}{
