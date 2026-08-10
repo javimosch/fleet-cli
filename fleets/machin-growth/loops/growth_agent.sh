@@ -155,7 +155,7 @@ EOF
   fi
 
   # Queue a HITL proposal for issue_comment.
-  jq -n \
+  jq -c -n \
     --arg kind "issue_comment" \
     --arg target "$target" \
     --arg body "$comment" \
