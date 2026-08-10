@@ -53,8 +53,8 @@ pick_top() {
     jq -r --arg exclude "$excl" '
       ($exclude | split("\n") | map(select(. != ""))) as $xs |
       (.prospects // []) |
-      map(select(.issue.number != null and .repository.nameWithOwner != null)) |
-      map(.target = "\(.repository.nameWithOwner)#\(.issue.number)") |
+      map(select(.number != null and .repository.nameWithOwner != null)) |
+      map(.target = "\(.repository.nameWithOwner)#\(.number)") |
       map(select(.target as $t | $xs | index($t) | not)) |
       sort_by(-.score) |
       .[0] // empty
@@ -96,10 +96,10 @@ for i in $(seq 1 $cycles); do
   fi
 
   repo=$(echo "$top" | jq -r '.repository.nameWithOwner')
-  number=$(echo "$top" | jq -r '.issue.number')
-  title=$(echo "$top" | jq -r '.issue.title')
-  issue_url=$(echo "$top" | jq -r '.issue.url')
-  body=$(echo "$top" | jq -r '.issue.body[0:800]')
+  number=$(echo "$top" | jq -r '.number')
+  title=$(echo "$top" | jq -r '.title')
+  issue_url=$(echo "$top" | jq -r '.url')
+  body=$(echo "$top" | jq -r '.body[0:800]')
   score=$(echo "$top" | jq -r '.score')
   target="$repo#$number"
 
