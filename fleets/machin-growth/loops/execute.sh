@@ -72,7 +72,7 @@ while true; do
 
       now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
       repo=$(echo "$action" | jq -r '.meta.repo // ""')
-      number=$(echo "$action" | jq -r '.target | split("/") | last // ""')
+      number=$(echo "$action" | jq -r '.meta.number // (.target | split("#") | last) // ""')
       target=$(echo "$action" | jq -r '.target // ""')
 
       jq -n \

@@ -22,16 +22,16 @@ if [[ -z "$target" || -z "$body" ]]; then
   exit 1
 fi
 
-# Parse repo and issue number from target URL.
+# Parse repo and issue number from target. Supports both URLs
+# (https://github.com/owner/repo/issues/46) and short targets (owner/repo#46).
 url_repo=$(echo "$target" | sed -n 's#https://github\.com/\([^/]*/[^/]*\)/issues/.*#\1#p')
-number=$(echo "$target" | sed -n 's#.*/issues/\([0-9]*\)$#\1#p')
+url_number=$(echo "$target" | sed -n 's#.*/issues/\([0-9]*\)$#\1#p')
+short_repo=$(echo "$target" | sed -n 's|^\([^/]*/[^/]*\)#[0-9]*$|\1|p')
+short_number=$(echo "$target" | sed -n 's|^[^/]*/[^/]*#\([0-9]*\)$|\1|p')
 
-if [[ -n "$meta_repo" && "$meta_repo" != "$url_repo" ]]; then
-  echo "{\"error\":\"repo mismatch: $meta_repo vs $url_repo\"}"
-  exit 1
-fi
+repo="${meta_repo:-$url_repo:-$short_repo}"
+number="${url_number:-$short_number}"
 
-repo="${meta_repo:-$url_repo}"
 if [[ -z "$repo" || -z "$number" ]]; then
   echo '{"error":"cannot parse repo/number from target"}'
   exit 1
