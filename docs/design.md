@@ -25,6 +25,7 @@ The GitHub star-growth fleet is a safe test case:
 - The `execute` loop runs actions through fleet-specific `handlers/<kind>.sh` scripts, keeping the core generic.
 - Rate limits and per-target cooldowns are built in.
 - Cost tracking: per-run API/LLM call counts accumulate in state.
+- Channel integration: cuzz relay for HITL, ops and alerts.
 
 It demonstrates the framework without violating GitHub ToS or being spammy.
 
