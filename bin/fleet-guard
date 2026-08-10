@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# fleet-guard — shared resource guard for fleet loops.
+# Exit 0 if CPU/RAM/load are acceptable, 1 if the run should be skipped.
+# Meant to be invoked at the top of heavy loops:
+#   fleet-guard || exit 0
+set -euo pipefail
+
+CPU_MAX="${FLEET_CPU_MAX:-80}"
+RAM_MAX="${FLEET_RAM_MAX:-85}"
+LOAD_MAX="${FLEET_LOAD_MAX:-10}"
+VERBOSE="${FLEET_GUARD_VERBOSE:-0}"
+
+log() {
+  if [[ "$VERBOSE" == "1" ]]; then
+    echo "$*" >&2
+  fi
+}
+
+# ---- RAM ----
+mem_line=$(free -m | awk '/^Mem:/{print $2,$3}')
+read -r total used <<< "$mem_line"
+ram_pct=$(( used * 100 / total ))
+log "fleet-guard: RAM ${ram_pct}% (${used}/${total} MB)"
+if [[ "$ram_pct" -gt "$RAM_MAX" ]]; then
+  echo "fleet-guard: RAM ${ram_pct}% > ${RAM_MAX}%, skipping run" >&2
+  exit 1
+fi
+
+# ---- CPU ----
+# top prints one line like: %Cpu(s):  5.0 us,  3.0 sy,  0.0 ni, 91.0 id, ...
+idle=$(top -bn1 | awk '/^%Cpu\(s\):/{print $8}' | tr -d 'id,')
+if [[ -z "$idle" || "$idle" == "-" ]]; then
+  idle=100
+fi
+cpu_pct=$(awk -v i="$idle" 'BEGIN { v=100-i; if(v<0) v=0; if(v>100) v=100; printf "%.0f", v }')
+log "fleet-guard: CPU ${cpu_pct}%"
+if [[ "$cpu_pct" -gt "$CPU_MAX" ]]; then
+  echo "fleet-guard: CPU ${cpu_pct}% > ${CPU_MAX}%, skipping run" >&2
+  exit 1
+fi
+
+# ---- Load average ----
+load=$(awk '{print $1}' /proc/loadavg)
+if awk -v l="$load" -v m="$LOAD_MAX" 'BEGIN { exit (l > m ? 0 : 1) }'; then
+  echo "fleet-guard: load $load > $LOAD_MAX, skipping run" >&2
+  exit 1
+fi
+
+exit 0
