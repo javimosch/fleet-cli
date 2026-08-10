@@ -18,7 +18,8 @@ queries=(
   'single binary language:go is:issue is:open'
   'static binary language:go is:issue is:open'
   'tiny binary language:go is:issue is:open'
-  'go compiler single binary is:issue is:open'
+  'CGO_ENABLED=0 language:go is:issue is:open'
+  'go build static binary language:go is:issue is:open'
 )
 
 for q in "${queries[@]}"; do
@@ -30,6 +31,7 @@ for q in "${queries[@]}"; do
   if ! jq -e . "$out" >/dev/null 2>&1; then
     echo '[]' > "$out"
   fi
+  sleep 3
 done
 
 # Merge all raw arrays, dedupe by URL, score, filter low / bad fits.
@@ -42,10 +44,17 @@ cat "$run_dir"/raw-*.json 2>/dev/null | jq -s 'add | group_by(.url) | map(.[0]) 
     (
       (if ($text | test("single[ -]?binary|static[ -]?binary|tiny[ -]?(binary|executable)|standalone"; "i")) then 30 else 0 end)
       + (if ($text | test("golang|(^|[^a-zA-Z0-9_])go([^a-zA-Z0-9_]|$)"; "i")) then 25 else 0 end)
-      + (if ($text | test("compile|compiler|build|distribution"; "i")) then 15 else 0 end)
+      + (if ($text | test("compile|compiler|build|distribution|release"; "i")) then 15 else 0 end)
+      + (if ($text | test("(^|[^a-zA-Z0-9_])binary([^a-zA-Z0-9_]|$)"; "i")) then 5 else 0 end)
+      + (if ($text | test("compatibility|portability|portable|no[ -]?runtime|self[- ]?contained|deploy"; "i")) then 10 else 0 end)
+      + (if ($text | test("CGO_ENABLED|(^|[^a-zA-Z0-9_])cgo([^a-zA-Z0-9_]|$)"; "i")) then 5 else 0 end)
+      + (if ($text | test("pure[ -]?go|purego|no[ -]?cgo|without[ -]?cgo"; "i")) then 10 else 0 end)
+      + (if ($text | test("(^|[^a-zA-Z0-9_])scratch([^a-zA-Z0-9_]|$)|distroless"; "i")) then 10 else 0 end)
       + (if (($p.commentsCount // 0) > 0) then 5 else 0 end)
-      - (if ($text | test("pyinstaller|python|electron|rust|(^|[^a-zA-Z0-9_])java([^a-zA-Z0-9_]|$)|c#|dotnet|[.]net|node|javascript|typescript|npm|(^|[^a-zA-Z0-9_])py([^a-zA-Z0-9_]|$)"; "i")) then 80 else 0 end)
-      - (if ($text | test("(^|[^a-zA-Z0-9_])docker([^a-zA-Z0-9_]|$)|(^|[^a-zA-Z0-9_])kubernetes([^a-zA-Z0-9_]|$)|container"; "i")) then 40 else 0 end)
+      - (if ($text | test("pyinstaller|python|php|clojure|electron|(^|[^a-zA-Z0-9_])rust([^a-zA-Z0-9_]|$)|(^|[^a-zA-Z0-9_])java([^a-zA-Z0-9_]|$)|c#|dotnet|[.]net|node|javascript|typescript|npm|(^|[^a-zA-Z0-9_])py([^a-zA-Z0-9_]|$)"; "i")) then 80 else 0 end)
+      - (if ($text | test("(^|[^a-zA-Z0-9_])docker([^a-zA-Z0-9_]|$)|(^|[^a-zA-Z0-9_])kubernetes([^a-zA-Z0-9_]|$)|(^|[^a-zA-Z0-9_])container([^a-zA-Z0-9_]|$)"; "i")) then 40 else 0 end)
+      - (if (([$text | match("(^|[^a-zA-Z0-9_])test([^a-zA-Z0-9_]|$)"; "g")] // []) | length) > 2 then 20 else 0 end)
+      - (if ($text | test("(^|[^a-zA-Z0-9_])(ui|gui|game|gaming|window|appearance|graphics|graphic)([^a-zA-Z0-9_]|$)"; "i")) then 40 else 0 end)
     ) as $score |
     $p + {
       score: $score,
@@ -54,11 +63,40 @@ cat "$run_dir"/raw-*.json 2>/dev/null | jq -s 'add | group_by(.url) | map(.[0]) 
                else "low relevance" end),
       body: ($body | .[0:2000])
     }
-    | select(.score >= 40)
+    | select(.score >= 30)
   )
   | sort_by(-.score)
-  | .[:20]
+  | .[:30]
 ' > "$run_dir/prospects.json" 2>/dev/null || echo '[]' > "$run_dir/prospects.json"
+
+# ---- Adjust for actual repository primary language ----
+# Search results can be noisy, so verify the repo language and re-score.
+if [[ -s "$run_dir/prospects.json" ]]; then
+  tmp="$run_dir/prospects-lang.json"
+  : > "$tmp"
+  while IFS= read -r row; do
+    repo=$(echo "$row" | jq -r '.repository.nameWithOwner')
+    lang=$(gh api "repos/$repo" --jq '.language' 2>/dev/null || echo "null")
+    if [[ "$lang" == "Go" ]]; then
+      echo "$row" | jq --arg lang "$lang" '. + {repo_language: $lang, score: (.score + 25)}' >> "$tmp"
+    elif [[ -n "$lang" && "$lang" != "null" ]]; then
+      echo "$row" | jq --arg lang "$lang" '. + {repo_language: $lang, score: (.score - 50)}' >> "$tmp"
+    else
+      echo "$row" | jq --arg lang "unknown" '. + {repo_language: $lang}' >> "$tmp"
+    fi
+  done < <(jq -c '.[]' "$run_dir/prospects.json")
+
+  if [[ -s "$tmp" ]]; then
+    jq -s 'map(. + {
+      reason: (if .score >= 70 then "title/body strongly match a Go static-binary use case"
+               elif .score >= 40 then "mentions single/static binaries but may have language mismatch"
+               else "low relevance" end)
+    })
+    | sort_by(-.score)
+    | .[:20]' "$tmp" > "$run_dir/prospects-scored.json"
+    mv "$run_dir/prospects-scored.json" "$run_dir/prospects.json"
+  fi
+fi
 
 prospects=$(cat "$run_dir/prospects.json")
 prospect_count=$(echo "$prospects" | jq 'length')

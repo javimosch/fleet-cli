@@ -22,8 +22,9 @@ today=$(date -u +%Y-%m-%d)
 dispatched_today=$(jq -r --arg today "$today" '(.dispatched // {})[$today] // []' "$state_file" 2>/dev/null || echo '[]')
 
 candidates=$(jq -s --argjson dispatched "$dispatched_today" --argjson max "$max_per_run" '
-  [.[] | select(.status == "approved" and .dispatched_at == null)] |
-  [.[0:$max][] | select(.id as $id | $dispatched | index($id) | not)]
+  [.[] | select(.status == "approved" and .dispatched_at == null) |
+         select(.id as $id | $dispatched | index($id) | not)] |
+  .[0:$max]
 ' "$queue_file")
 
 if [[ "$dry" == "true" ]]; then
@@ -53,7 +54,7 @@ events=$(echo "$candidates" | jq --arg dry "$dry" -c '
 # Dry-run must not touch state.
 ids=$(echo "$candidates" | jq -r '[.[].id // empty]')
 dispatched_map=$(jq -r '(.dispatched // {})' "$state_file" 2>/dev/null || echo '{}')
-updated_dispatched=$(echo "$dispatched_map" | jq --arg today "$today" --argjson ids "$ids" '.[$today] = $ids')
+updated_dispatched=$(echo "$dispatched_map" | jq --arg today "$today" --argjson ids "$ids" '.[$today] = ((.[$today] // []) + $ids | unique)')
 
 if [[ "$dry" == "true" ]]; then
   cat > "$run_dir/result.json" <<EOF

@@ -116,23 +116,21 @@ if [[ "$live" == "1" && "$dry" != "true" && -s "$engaged_file" ]]; then
   events=$(echo "$events" | jq -c --argjson n "$engaged_count" '. + [{"name": "action.engaged", "data": {"count": $n}}]')
 fi
 
-cat > "$run_dir/result.json" <<EOF
-{
-  "events": $events
-}
-EOF
-
-# Only mutate state when we are actually executing.
+# Build engaged list: empty in dry-run, existing+new when live.
 if [[ "$live" == "1" && "$dry" != "true" ]]; then
-  # Preserve existing engaged entries and append the new ones.
   existing_engaged=$(jq -r '.engaged // []' "$state_file" 2>/dev/null || echo '[]')
   new_engaged=$(jq -s . "$engaged_file" 2>/dev/null || echo '[]')
   engaged=$(jq -s 'add // []' <<< "$existing_engaged $new_engaged")
+else
+  engaged='[]'
+fi
 
-  cat > "$run_dir/state.json" <<EOF
+cat > "$run_dir/result.json" <<EOF
 {
-  "pending_actions": $remaining,
-  "engaged": $engaged
+  "events": $events,
+  "state_set": {
+    "pending_actions": $remaining,
+    "engaged": $engaged
+  }
 }
 EOF
-fi

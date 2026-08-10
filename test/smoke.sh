@@ -43,9 +43,12 @@ fleet emit machin-growth prospect.found --dry-run | jq -e '.chain | length == 1'
 echo "== run prospect (live chain) =="
 fleet run machin-growth prospect | jq -e '.status == "ok" and (.chain | length == 1)'
 
-echo "== queue should have one proposal =="
+echo "== queue should have at least one proposal =="
 COUNT=$(fleet queue machin-growth | jq 'length')
-assert_eq 1 "$COUNT" "queue length after live prospect chain"
+if [[ "$COUNT" -lt 1 ]]; then
+  echo "FAIL: queue is empty but should have proposals"
+  exit 1
+fi
 PID=$(fleet queue machin-growth | jq -r '.[0].id')
 
 echo "== approve and reject the proposal =="
