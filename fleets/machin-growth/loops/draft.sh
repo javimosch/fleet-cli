@@ -3,6 +3,7 @@
 set -euo pipefail
 
 state_file="${FLEET_STATE_FILE:-}"
+queue_file="${FLEET_QUEUE_FILE:-}"
 run_dir="${FLEET_RUN_DIR:-/tmp/fleet-run}"
 mkdir -p "$run_dir"
 
@@ -12,14 +13,26 @@ if [[ -z "$state_file" || ! -f "$state_file" ]]; then
 fi
 
 prospects=$(jq -r '.prospects // []' "$state_file")
+engaged=$(jq -r '.engaged // []' "$state_file" 2>/dev/null || echo '[]')
+
+# Gather target URLs we should skip (already engaged or already queued).
+engaged_targets=$(echo "$engaged" | jq '[.[].target // empty]')
+queued_targets='[]'
+if [[ -n "$queue_file" && -f "$queue_file" ]]; then
+  queued_targets=$(jq -s '[.[] | .target]' "$queue_file" 2>/dev/null || echo '[]')
+fi
+
 max_drafts=3
 
-# Only draft prospects that look like a strong match.
-echo "$prospects" | jq -c --argjson max "$max_drafts" --arg repo javimosch/machin '
+# Only draft prospects that look like a strong match and are not duplicates.
+echo "$prospects" | jq -c --argjson max "$max_drafts" --arg repo javimosch/machin --argjson engaged "$engaged_targets" --argjson queued "$queued_targets" '
   .[:$max] |
   .[] |
-  # High bar: strong title/body match, not a language mismatch.
+  # High bar: strong title/body match.
   select(.score >= 70 and (.reason | contains("strongly match"))) |
+  # Skip if we already engaged or queued this target.
+  select(.url as $u | $engaged | index($u) | not) |
+  select(.url as $u | $queued | index($u) | not) |
   {
     kind: "issue_comment",
     target: .url,

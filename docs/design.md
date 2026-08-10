@@ -19,7 +19,7 @@ All domain logic lives in `loops/*.sh`, so fleets can be written in any language
 
 The GitHub star-growth fleet is a safe test case:
 
-- Read-only loops (`observe`, `prospect`) exercise the config, state and event system.
+- Read-only loops (`observe`, `prospect`) exercise the config, state and event system; `prospect` also monitors engaged threads for follow-ups.
 - The `draft` loop generates outbound *proposals* but never posts.
 - The `dispatch` loop emits approved *actions* but does not execute them.
 - The `execute` loop runs actions through fleet-specific `handlers/<kind>.sh` scripts, keeping the core generic.
