@@ -23,7 +23,8 @@ go build -o fleet ./cmd/fleet
 | `init` | Scaffold a new fleet from a template |
 | `validate <fleet>` | Parse and check `fleet.yml` |
 | `plan <fleet>` | Show schedules and next expected runs |
-| `run <fleet> <loop> [--dry-run]` | Execute one loop now |
+| `run <fleet> <loop> [--dry-run] [--no-chain]` | Execute one loop now; by default it chains to `on` event listeners |
+| `emit <fleet> <event> [--data <json>] [--dry-run]` | Manually trigger an event and dispatch its listeners |
 | `status <fleet>` | Show state and HITL counts |
 | `queue <fleet>` | List all proposals |
 | `approve <fleet> <proposal-id>` | Approve an outbound proposal |
@@ -98,6 +99,23 @@ The included `fleets/machin-growth` is a dry-run, ToS-safe star-growth fleet for
 - `execute` runs queued actions through `handlers/<kind>.sh` so the fleet stays generic.
 
 It never posts, stars, or messages anyone automatically. All outbound actions must be approved through `fleet approve` and executed through `fleet run <fleet> execute` with `FLEET_LIVE=1`.
+
+## Event-driven loops
+
+Loops can declare `on: [event.name]`. When a run emits one of those events, `fleet-cli` runs the listeners in a single BFS chain.
+
+```bash
+./fleet run machin-growth prospect
+# runs prospect, then automatically runs draft because draft is on: [prospect.found]
+
+./fleet run machin-growth prospect --no-chain
+# runs only prospect
+
+./fleet emit machin-growth prospect.found --dry-run
+# manually fire the event and see which loops would run
+```
+
+The output includes the initial run plus a `chain` array of all downstream runs.
 
 ## Cost tracking
 

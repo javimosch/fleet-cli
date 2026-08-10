@@ -2,7 +2,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -13,7 +12,6 @@ import (
 
 	"github.com/javimosch/fleet-cli/internal/config"
 	"github.com/javimosch/fleet-cli/internal/hitl"
-	"github.com/javimosch/fleet-cli/internal/runner"
 	"github.com/javimosch/fleet-cli/internal/state"
 )
 
@@ -36,6 +34,8 @@ func main() {
 		os.Exit(cmdPlan(tail))
 	case "run":
 		os.Exit(cmdRun(tail))
+	case "emit":
+		os.Exit(cmdEmit(tail))
 	case "status":
 		os.Exit(cmdStatus(tail))
 	case "queue":
@@ -60,7 +60,8 @@ Commands:
   init --name <name> --repo <repo> [--dir <dir>]
   validate <fleet>
   plan <fleet>
-  run <fleet> <loop> [--dry-run]
+  run <fleet> <loop> [--dry-run] [--no-chain]
+  emit <fleet> <event> [--data <json>] [--dry-run]
   status <fleet>
   queue <fleet>
   approve <fleet> <proposal-id> [--reason <reason>]
@@ -241,57 +242,6 @@ func cmdPlan(args []string) int {
 	return 0
 }
 
-// cmdRun executes a loop.
-func cmdRun(args []string) int {
-	if len(args) < 2 {
-		fail("usage: fleet run <fleet> <loop> [--dry-run]")
-	}
-	fleetName, loopName := args[0], args[1]
-	fleet, fleetDir, err := loadFleet(fleetName)
-	if err != nil {
-		fail("load fleet: %v", err)
-	}
-	loop := fleet.GetLoop(loopName)
-	if loop == nil {
-		fail("loop %s not found", loopName)
-	}
-
-	dryRun := false
-	for _, a := range args[2:] {
-		if a == "--dry-run" {
-			dryRun = true
-		}
-	}
-
-	st, q, err := openStores(fleet)
-	if err != nil {
-		fail("open stores: %v", err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
-
-	started := time.Now()
-	res, err := runner.Run(ctx, fleet, loop, fleetDir, st, q, dryRun)
-	finished := time.Now()
-	_ = st.RunRecord(loopName, status(err), started, finished, map[string]interface{}{
-		"dry_run": dryRun,
-		"events":  res.Events,
-		"cost":    res.Cost,
-	})
-	if err != nil {
-		fail("run %s: %v\n%s", loopName, err, res.Log)
-	}
-	outputJSON(map[string]interface{}{
-		"loop":      loopName,
-		"dry_run":   dryRun,
-		"events":    res.Events,
-		"proposals": len(res.Proposals),
-		"log":       res.Log,
-		"cost":      res.Cost,
-	})
-	return 0
-}
 
 func status(err error) string {
 	if err == nil {
