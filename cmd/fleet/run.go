@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/javimosch/fleet-cli/internal/config"
@@ -31,15 +32,15 @@ type runSummary struct {
 // cmdRun executes a loop, optionally chaining to event-driven downstream loops.
 func cmdRun(args []string) int {
 	if len(args) < 2 {
-		fail("usage: fleet run <fleet> <loop> [--dry-run] [--no-chain]")
+		failCode(80, "invalid_arguments", "usage: fleet run <fleet> <loop> [--dry-run] [--no-chain]", "fleet help-json")
 	}
 	fleetName, loopName := args[0], args[1]
 	fleet, fleetDir, err := loadFleet(fleetName)
 	if err != nil {
-		fail("load fleet: %v", err)
+		failCode(92, "resource_not_found", fmt.Sprintf("load fleet: %v", err), "fleet init --name <name> --repo <owner/name>")
 	}
 	if fleet.GetLoop(loopName) == nil {
-		fail("loop %s not found", loopName)
+		failCode(92, "loop_not_found", fmt.Sprintf("loop %s not found", loopName), "fleet help-json")
 	}
 
 	dryRun, noChain := false, false
@@ -54,7 +55,7 @@ func cmdRun(args []string) int {
 
 	st, q, err := openStores(fleet)
 	if err != nil {
-		fail("open stores: %v", err)
+		failCode(90, "state_unavailable", fmt.Sprintf("open stores: %v", err), "set FLEET_STATE_DIR to a writable directory")
 	}
 
 	loop := fleet.GetLoop(loopName)
@@ -64,7 +65,7 @@ func cmdRun(args []string) int {
 	if noChain {
 		lo := runOneLoop(ctx, fleet, fleetDir, st, q, dryRun, loopName)
 		if lo.Status != "ok" {
-			fail("run %s: %s\n%s", loopName, lo.Status, lo.Log)
+			failCode(105, "loop_failed", fmt.Sprintf("run %s: %s\n%s", loopName, lo.Status, lo.Log), "inspect the loop log and retry deliberately")
 		}
 		outputJSON(lo)
 		return 0
@@ -72,10 +73,10 @@ func cmdRun(args []string) int {
 
 	sum, err := runChainFromLoop(ctx, fleet, fleetDir, st, q, dryRun, loopName)
 	if err != nil {
-		fail("run chain: %v", err)
+		failCode(105, "loop_chain_failed", fmt.Sprintf("run chain: %v", err), "inspect the loop log and retry deliberately")
 	}
 	if sum.Status != "ok" {
-		fail("run %s: %s\n%s", loopName, sum.Status, sum.Log)
+		failCode(105, "loop_failed", fmt.Sprintf("run %s: %s\n%s", loopName, sum.Status, sum.Log), "inspect the loop log and retry deliberately")
 	}
 	outputJSON(sum)
 	return 0
@@ -103,11 +104,13 @@ func runOneLoop(ctx context.Context, fleet *config.Fleet, fleetDir string, st *s
 		Log:       logText,
 		Cost:      res.Cost,
 	}
-	_ = st.RunRecord(loopName, lo.Status, started, finished, map[string]interface{}{
-		"dry_run": dryRun,
-		"events":  res.Events,
-		"cost":    res.Cost,
-	})
+	if !dryRun {
+		_ = st.RunRecord(loopName, lo.Status, started, finished, map[string]interface{}{
+			"dry_run": dryRun,
+			"events":  res.Events,
+			"cost":    res.Cost,
+		})
+	}
 	return lo
 }
 
