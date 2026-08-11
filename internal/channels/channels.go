@@ -171,13 +171,12 @@ func (m *Manager) NotifyHITL(p hitl.Proposal, q *hitl.Queue, st *state.Store) er
 		data["relais_error"] = relErr.Error()
 	}
 
-	// Send a plain-text question to cuzz and keep the structured JSON payload too.
+	// Send a plain-text question to cuzz. On failure, fall back to the structured JSON payload.
 	if err := m.sendCuzzText("ops", "question", summary, content); err != nil {
-		// If cuzz fails, still attempt the structured event.
 		_ = m.Send("ops", "hitl", summary, data)
 		return err
 	}
-	return m.Send("ops", "hitl", summary, data)
+	return nil
 }
 
 // sendCuzzText sends a human-readable cuzz message with newlines.
