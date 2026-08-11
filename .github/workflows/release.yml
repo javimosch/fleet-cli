@@ -50,9 +50,16 @@ jobs:
           path: dist
           pattern: fleet-*
           merge-multiple: true
-      - name: Checksums
-        run: sha256sum dist/fleet-* > dist/SHA256SUMS
+      - name: Checksums and update manifests
+        run: |
+          sha256sum dist/fleet-* > dist/SHA256SUMS
+          for binary in dist/fleet-*; do
+            name="${binary##*/}"
+            hash="$(sha256sum "$binary" | awk '{print $1}')"
+            platform="${name#fleet-}"
+            printf '{"ok":true,"version":"%s","download":"%s","sha256":"%s"}\n' "${hash:0:12}" "$name" "$hash" > "dist/version-${platform}.json"
+          done
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/fleet-* dist/SHA256SUMS --generate-notes --title "$GITHUB_REF_NAME"
+        run: gh release create "$GITHUB_REF_NAME" dist/fleet-* dist/SHA256SUMS dist/version-*.json --generate-notes --title "$GITHUB_REF_NAME"

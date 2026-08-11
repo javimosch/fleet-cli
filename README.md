@@ -34,6 +34,7 @@ go build -o fleet ./cmd/fleet
 | `run <fleet> execute` | Execute approved actions (live requires `FLEET_LIVE=1`) |
 | `install <fleet> [--system] [--no-start]` | Render and enable systemd timers |
 | `uninstall <fleet> [--system]` | Remove systemd timers and services |
+| `update [--check\|--force]` | Verify, smoke-test, and atomically install a newer release |
 
 ## Systemd timers
 
@@ -177,12 +178,17 @@ loops:
 - Successful command data is JSON on stdout. Progress, loop stderr, and feedback delivery notes go to stderr.
 - Typed errors use semantic exit codes: `80–89` input, `90–99` resource/precondition, `100–109` external/integration, `110–119` internal.
 - `fleet feedback "..." --kind bug` is a relay-only, best-effort report for this pure CLI. It always exits successfully after generating one idempotency key; set `FEEDBACK_RELAY=off` to disable delivery.
+- `fleet update [--check|--force]` adopts the cli-update-spec update-command subset: it hashes the running binary, fetches a `FLEET_UPDATE_URL` manifest, verifies short/full SHA-256, smoke-tests `fleet version`, then atomically swaps the executable while retaining a timestamped `.bak`.
+- Passive update nudges, the standalone installer, and `install`/`uninstall` self-relocation are intentionally not part of this iteration; the existing release workflow remains the first-install path.
+- The manifest defaults to the GitHub release asset `version-<GOOS>-<GOARCH>.json`; it contains `{ "ok": true, "version": "<sha256[:12]>", "download": "fleet-<GOOS>-<GOARCH>", "sha256": "<full hash>" }`.
+- `fleet update --check` exits `5` when a newer artifact is available and never downloads; `--force` repairs a matching/corrupt install. Updates resolve symlinks, serialize concurrent callers in-process, and retain a timestamped rollback backup.
 - Telemetry is intentionally not enabled: fleet-cli is infrastructure tooling and does not need an adoption signal.
 
 ```sh
 fleet help-json | jq '.commands | keys'
 fleet guide | jq '.guide.loop'
 FEEDBACK_RELAY=off fleet feedback "the loop failed" --kind bug
+fleet update --check
 ```
 
 Tagged releases publish static binaries for Linux and macOS on amd64 and arm64.
