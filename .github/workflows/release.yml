@@ -52,7 +52,7 @@ jobs:
           merge-multiple: true
       - name: Checksums and update manifests
         run: |
-          sha256sum dist/fleet-* > dist/SHA256SUMS
+          (cd dist && sha256sum fleet-* > SHA256SUMS)
           for binary in dist/fleet-*; do
             name="${binary##*/}"
             hash="$(sha256sum "$binary" | awk '{print $1}')"
