@@ -5,7 +5,7 @@ import (
 	"os"
 )
 
-var fleetVersion = "0.1.0"
+var fleetVersion = "0.2.0"
 
 const outputContractVersion = "1.0"
 
