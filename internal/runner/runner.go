@@ -136,7 +136,7 @@ func Run(ctx context.Context, fleet *config.Fleet, loop *config.Loop, fleetDir s
 				return res, fmt.Errorf("queue proposal: %w", err)
 			}
 			p.ID = id
-			_ = m.NotifyHITL(p)
+			_ = m.NotifyHITL(p, q, st)
 		}
 		// Append run cost to state ledger.
 		if res.Cost != nil && len(res.Cost) > 0 {

@@ -13,6 +13,8 @@ import (
 
 	"github.com/javimosch/fleet-cli/internal/config"
 	"github.com/javimosch/fleet-cli/internal/hitl"
+	"github.com/javimosch/fleet-cli/internal/relais"
+	"github.com/javimosch/fleet-cli/internal/state"
 )
 
 // Manager routes messages to the channels defined in fleet.yml.
@@ -96,22 +98,127 @@ func (m *Manager) Send(channelName, kind, summary string, data map[string]interf
 }
 
 // NotifyHITL sends a human-in-the-loop request to the ops channel.
-func (m *Manager) NotifyHITL(p hitl.Proposal) error {
-	summary := fmt.Sprintf("HITL: %s proposal for %s", p.Loop, p.Target)
-	cmd := fmt.Sprintf("fleet approve %s %s", m.fleet.Name, p.ID)
-	if p.Reason != "" {
-		cmd += " --reason \"" + p.Reason + "\""
+// It mints a relais inbox so the human can approve/reject from the cuzz message.
+func (m *Manager) NotifyHITL(p hitl.Proposal, q *hitl.Queue, st *state.Store) error {
+	if p.ID == "" {
+		return nil
 	}
+
+	// Try to mint a relais inbox. Failure is non-fatal — we fall back to plain cuzz.
+	rc := relais.NewClient()
+	label := fmt.Sprintf("fleet-cli %s %s", m.fleet.Name, p.ID)
+	inbox, relErr := rc.NewInbox(label)
+
+	pr := &hitl.ProposalRelais{}
+	if relErr == nil && inbox != nil {
+		nonce, nerr := relais.NewNonce()
+		if nerr == nil {
+			pr.InboxID = inbox.InboxID
+			pr.CatchURL = inbox.CatchURL
+			pr.Nonce = nonce
+			pr.ApproveURL = relais.DecisionURL(inbox.CatchURL, "approve", nonce)
+			pr.RejectURL = relais.DecisionURL(inbox.CatchURL, "reject", nonce)
+			now := time.Now().UTC()
+			pr.CreatedAt = &now
+
+			// Store the secret token in fleet state, not the queue.
+			if err := relais.SetToken(st, p.ID, inbox.Token, inbox.InboxID); err != nil {
+				// Still queue the proposal, but reset relais metadata if we can't save the token.
+				pr = nil
+			} else if q != nil {
+				_ = q.SetRelais(p.ID, pr)
+			}
+		}
+	}
+
+	// Human-readable content. Include the relais one-tap URLs first.
+	lines := []string{
+		fmt.Sprintf("HITL: %s / %s", m.fleet.Name, p.Loop),
+		fmt.Sprintf("Proposal: %s (%s)", p.ID, p.Kind),
+		fmt.Sprintf("Target: %s", p.Target),
+	}
+	if p.Body != "" {
+		preview := p.Body
+		if len(preview) > 220 {
+			preview = preview[:220] + "..."
+		}
+		lines = append(lines, fmt.Sprintf("Preview: %s", preview))
+	}
+
+	if pr != nil && pr.ApproveURL != "" {
+		lines = append(lines,
+			fmt.Sprintf("Approve: %s", pr.ApproveURL),
+			fmt.Sprintf("Reject: %s", pr.RejectURL),
+		)
+	} else {
+		lines = append(lines,
+			fmt.Sprintf("Approve: fleet approve %s %s", m.fleet.Name, p.ID),
+			fmt.Sprintf("Reject: fleet reject %s %s", m.fleet.Name, p.ID),
+		)
+	}
+
+	content := strings.Join(lines, "\n")
+	summary := fmt.Sprintf("HITL: %s proposal %s", p.Loop, p.ID)
 	data := map[string]interface{}{
 		"proposal_id": p.ID,
 		"loop":        p.Loop,
 		"target":      p.Target,
 		"kind":        p.Kind,
 		"score":       p.Meta["score"],
-		"approve_cmd": cmd,
-		"reject_cmd":  fmt.Sprintf("fleet reject %s %s", m.fleet.Name, p.ID),
+		"relais":      pr,
+	}
+	if relErr != nil {
+		data["relais_error"] = relErr.Error()
+	}
+
+	// Send a plain-text question to cuzz and keep the structured JSON payload too.
+	if err := m.sendCuzzText("ops", "question", summary, content); err != nil {
+		// If cuzz fails, still attempt the structured event.
+		_ = m.Send("ops", "hitl", summary, data)
+		return err
 	}
 	return m.Send("ops", "hitl", summary, data)
+}
+
+// sendCuzzText sends a human-readable cuzz message with newlines.
+func (m *Manager) sendCuzzText(channelName, kind, summary, content string) error {
+	cfg, ok := m.fleet.Channels[channelName]
+	if !ok {
+		return nil
+	}
+	if cfg.Kind != "cuzz" {
+		return fmt.Errorf("unsupported channel kind %q", cfg.Kind)
+	}
+	if m.bin == "" {
+		return fmt.Errorf("cuzz binary not found")
+	}
+
+	cuzzChannel := cfg.Channel
+	if cuzzChannel == "" {
+		cuzzChannel = m.fleet.Name
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, m.bin, "send",
+		"--channel", cuzzChannel,
+		"--kind", cuzzKindFor(kind),
+		"--content", content,
+		"--author", author(),
+	)
+	cmd.Env = os.Environ()
+	if cfg.URL != "" {
+		cmd.Env = append(cmd.Env, "CUZZ_URL="+cfg.URL)
+	}
+
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("cuzz send to %s: %w: %s", channelName, err, strings.TrimSpace(out.String()))
+	}
+	return nil
 }
 
 // NotifyEvent sends a loop completion event to the ops channel.

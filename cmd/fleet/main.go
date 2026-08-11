@@ -13,6 +13,7 @@ import (
 	"github.com/javimosch/fleet-cli/internal/channels"
 	"github.com/javimosch/fleet-cli/internal/config"
 	"github.com/javimosch/fleet-cli/internal/hitl"
+	"github.com/javimosch/fleet-cli/internal/relais"
 	"github.com/javimosch/fleet-cli/internal/state"
 )
 
@@ -51,6 +52,8 @@ func main() {
 		os.Exit(cmdStatus(tail))
 	case "queue":
 		os.Exit(cmdQueue(tail))
+	case "relais-poll":
+		os.Exit(cmdRelaisPoll(tail))
 	case "approve", "reject":
 		os.Exit(cmdDecision(cmd, tail))
 	case "state":
@@ -77,6 +80,7 @@ Commands:
   queue <fleet>
   approve <fleet> <proposal-id> [--reason <reason>]
   reject <fleet> <proposal-id> [--reason <reason>]
+  relais-poll <fleet>
   state <fleet> get <key>
   state <fleet> set <key> <value>
   install <fleet> [--system] [--no-start]
@@ -304,6 +308,44 @@ func cmdQueue(args []string) int {
 		failCode(90, "queue_unavailable", fmt.Sprintf("list queue: %v", err), "check FLEET_STATE_DIR")
 	}
 	outputJSON(proposals)
+	return 0
+}
+
+// cmdRelaisPoll checks relais inboxes for pending proposals and applies decisions.
+func cmdRelaisPoll(args []string) int {
+	if len(args) < 1 {
+		failCode(80, "invalid_arguments", "usage: fleet relais-poll <fleet>", "fleet help-json")
+	}
+	fleet, _, err := loadFleet(args[0])
+	if err != nil {
+		failCode(92, "resource_not_found", fmt.Sprintf("load fleet: %v", err), "fleet init --name <name> --repo <owner/name>")
+	}
+	st, q, err := openStores(fleet)
+	if err != nil {
+		failCode(90, "state_unavailable", fmt.Sprintf("open stores: %v", err), "set FLEET_STATE_DIR to a writable directory")
+	}
+
+	client := relais.NewClient()
+	results, err := relais.PollQueue(client, q, st)
+	if err != nil {
+		failCode(105, "relais_poll_failed", fmt.Sprintf("poll: %v", err), "check RELAIS_URL and network")
+	}
+
+	// Best-effort cuzz notification for each applied decision.
+	m := channels.NewManager(fleet)
+	for _, r := range results {
+		if r.Decision == "" || r.Error != "" {
+			continue
+		}
+		_ = m.Send("ops", "decision", fmt.Sprintf("%s %s", r.Decision, r.ID), map[string]interface{}{
+			"proposal_id": r.ID,
+			"decision":    r.Decision,
+			"approver":    r.By,
+			"reason":      "relais",
+		})
+	}
+
+	outputJSON(map[string]interface{}{"ok": true, "decisions": results})
 	return 0
 }
 

@@ -22,6 +22,17 @@ const (
 	Expired   = "expired"
 )
 
+// ProposalRelais holds the public relais catch-all metadata for one proposal.
+type ProposalRelais struct {
+	InboxID    string     `json:"inbox_id,omitempty"`
+	CatchURL   string     `json:"catch_url,omitempty"`
+	ApproveURL string     `json:"approve_url,omitempty"`
+	RejectURL  string     `json:"reject_url,omitempty"`
+	Nonce      string     `json:"nonce,omitempty"`
+	CreatedAt  *time.Time `json:"created_at,omitempty"`
+	DecidedBy  string     `json:"decided_by,omitempty"`
+}
+
 // Proposal is an outbound action awaiting human approval.
 type Proposal struct {
 	ID         string                 `json:"id"`
@@ -32,6 +43,7 @@ type Proposal struct {
 	Body       string                 `json:"body"`
 	BodyHash   string                 `json:"body_hash"` // hash at approval time
 	Meta       map[string]interface{} `json:"meta"`
+	Relais     *ProposalRelais        `json:"relais,omitempty"`
 	Status     string                 `json:"status"`
 	CreatedAt  time.Time              `json:"created_at"`
 	ApprovedAt *time.Time             `json:"approved_at,omitempty"`
@@ -133,6 +145,27 @@ func (q *Queue) UpdateStatus(id, status, reason, approver string) error {
 		return fmt.Errorf("proposal %s not found", id)
 	}
 	return q.writeAllLocked(proposals)
+}
+
+// SetRelais updates the relais metadata on a proposal.
+func (q *Queue) SetRelais(id string, r *ProposalRelais) error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	proposals, err := q.readAllLocked()
+	if err != nil {
+		return err
+	}
+	for i := range proposals {
+		if proposals[i].ID == id {
+			proposals[i].Relais = r
+			if r.CreatedAt == nil {
+				now := time.Now().UTC()
+				proposals[i].Relais.CreatedAt = &now
+			}
+			return q.writeAllLocked(proposals)
+		}
+	}
+	return fmt.Errorf("proposal %s not found", id)
 }
 
 // Approved returns approved-but-not-dispatched proposals, sorted oldest first.
