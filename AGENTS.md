@@ -81,3 +81,4 @@ For the full, searchable graph of project knowledge, use memgraph in the fleet-c
 - `[fleet-common-pitfalls]`
 - `[fleet-cli-commands]`
 - `[fleet-event-graph]`
+- `[rbm21-growth-fleets]`
