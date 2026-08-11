@@ -54,6 +54,7 @@ func guideData() map[string]interface{} {
 				"fleet help-json",
 				"fleet version",
 				"fleet feedback \"<message>\" [--kind bug|idea|praise|note] [--context <text>]",
+				"fleet update [--check|--force]",
 			},
 		},
 		"examples": []map[string]interface{}{
@@ -68,6 +69,7 @@ func guideData() map[string]interface{} {
 			"PATH shims improve safety but are not a security boundary against a shell command that deliberately escapes them",
 			"fleet install can enable systemd units; inspect generated units before using --system",
 			"fleet feedback is best-effort and never fails the caller; FEEDBACK_RELAY=off disables relay delivery",
+			"fleet update compares the running binary's SHA-256 content hash, verifies and smoke-tests a candidate, then atomically swaps it while retaining a timestamped backup",
 		},
 		"version":  fleetVersion,
 		"see_also": []string{"fleet help-json", "fleet version"},
@@ -110,6 +112,7 @@ proposals for human approval, and follows emitted events to downstream loops.
 
 Use fleet help-json for the complete command catalog. Use fleet feedback to
 report a bug; it is best-effort and can be disabled with FEEDBACK_RELAY=off.
+Use fleet update --check to detect a newer release without changing the binary.
 `
 }
 
@@ -119,7 +122,7 @@ func cmdHelpJSON() int {
 		"output":      "json",
 		"interactive": false,
 		"commands":    helpCatalog(),
-		"exit_codes":  map[string]string{"0": "success", "5": "update available (reserved)", "80": "input/validation", "90": "precondition/resource", "100": "external/integration", "110": "internal"}, "env": []string{"FLEET_DIR", "FLEET_STATE_DIR", "FLEET_LIVE", "FLEET_CUZZ_BIN", "CUZZ_URL", "CUZZ_TOKEN", "CUZZ_AGENT", "FEEDBACK_RELAY"},
+		"exit_codes":  map[string]string{"0": "success", "5": "update available", "80": "input/validation", "90": "precondition/resource", "100": "external/integration", "110": "internal"}, "env": []string{"FLEET_DIR", "FLEET_STATE_DIR", "FLEET_LIVE", "FLEET_CUZZ_BIN", "CUZZ_URL", "CUZZ_TOKEN", "CUZZ_AGENT", "FEEDBACK_RELAY", "FLEET_UPDATE_URL"},
 		"see_also": []string{"fleet guide", "fleet version"},
 	})
 	return 0
@@ -144,10 +147,11 @@ func helpCatalog() map[string]interface{} {
 		"help-json": map[string]interface{}{"args": []string{}, "flags": []string{}, "auth": false},
 		"version":   map[string]interface{}{"args": []string{}, "flags": []string{}, "auth": false},
 		"feedback":  map[string]interface{}{"args": []string{"<message>"}, "flags": []string{"--kind bug|idea|praise|note", "--context <text>"}, "auth": false},
+		"update":    map[string]interface{}{"args": []string{}, "flags": []string{"--check", "--force"}, "auth": false},
 	}
 }
 
 func cmdVersion() int {
-	outputJSON(map[string]interface{}{"ok": true, "version": fleetVersion, "output_contract": outputContractVersion})
+	outputJSON(map[string]interface{}{"ok": true, "tool": "fleet", "version": fleetVersion, "output_contract": outputContractVersion})
 	return 0
 }

@@ -35,6 +35,8 @@ func main() {
 		os.Exit(cmdVersion())
 	case "feedback":
 		os.Exit(cmdFeedback(tail))
+	case "update":
+		os.Exit(cmdUpdate(tail))
 	case "init":
 		os.Exit(cmdInit(tail))
 	case "validate":
@@ -83,6 +85,7 @@ Commands:
   help-json
   version
   feedback \"<message>\" [--kind bug|idea|praise|note] [--context <text>]
+  update [--check|--force]
 
 Environment:
   FLEET_DIR         fleet directory override
