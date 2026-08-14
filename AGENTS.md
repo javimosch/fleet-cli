@@ -91,3 +91,8 @@ For the full, searchable graph of project knowledge, use memgraph in the fleet-c
 - `[fleet-cli-commands]`
 - `[fleet-event-graph]`
 - `[rbm21-growth-fleets]`
+
+## Maintain the `javimosch/dashboard` hart link registry
+
+- `https://hart.intrane.fr/a/javimosch/dashboard` is a private hart that lists all useful fleet-cli / am-fleet / intrane hart links, grouped by project.
+- Whenever a new hart artifact is generated for a fleet, loop, handler, or dashboard output, add the link to `am-fleet/scripts/javimosch-dashboard.py` under the correct project section, run that script to republish `javimosch/dashboard`, and commit/push the change.
