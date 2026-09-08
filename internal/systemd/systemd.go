@@ -212,7 +212,6 @@ func renderTimer(name, trigger string, loop config.Loop) string {
 Description=%s
 
 [Timer]%s
-Persistent=true
 
 [Install]
 WantedBy=timers.target
@@ -224,12 +223,10 @@ func renderTimerTrigger(schedule string) (string, error) {
 	switch schedule {
 	case "":
 		return "", nil
-	case "hourly":
-		return "\nOnBootSec=2min\nOnUnitActiveSec=1h", nil
+	case "hourly", "every 1h":
+		return intervalTrigger(time.Hour), nil
 	case "every 15m":
-		return "\nOnBootSec=2min\nOnUnitActiveSec=15min", nil
-	case "every 1h":
-		return "\nOnBootSec=2min\nOnUnitActiveSec=1h", nil
+		return intervalTrigger(15 * time.Minute), nil
 	}
 	if len(schedule) > 6 && schedule[:6] == "daily@" {
 		t, err := time.Parse("15:04", schedule[6:])
@@ -243,7 +240,87 @@ func renderTimerTrigger(schedule string) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("invalid @every schedule %q: %w", schedule, err)
 		}
-		return fmt.Sprintf("\nOnBootSec=2min\nOnUnitActiveSec=%s", d.String()), nil
+		if d <= 0 {
+			return "", fmt.Errorf("invalid @every schedule %q: interval must be positive", schedule)
+		}
+		return intervalTrigger(d), nil
 	}
 	return "", fmt.Errorf("unsupported schedule %q", schedule)
+}
+
+// intervalTrigger renders a repeating interval as a wall-clock OnCalendar
+// trigger rather than the monotonic OnBootSec/OnUnitActiveSec pair.
+//
+// Monotonic timers anchor their next elapse on the *service's* last activation.
+// The units here are Type=oneshot, so that anchor goes stale (or disappears
+// entirely) whenever the unit files are rewritten on a live box, and the timer
+// lands in SubState=elapsed with NextElapseUSecMonotonic=infinity — dead until
+// someone starts the service by hand; neither restart nor a full
+// uninstall/reinstall brings it back. Every OnCalendar timer on the fleet
+// survived the same reinstalls untouched, so intervals are expressed as
+// calendar expressions: they recompute the next elapse from the wall clock and
+// cannot be stranded.
+func intervalTrigger(d time.Duration) string {
+	mins := int((d + 30*time.Second) / time.Minute)
+	if mins < 1 {
+		mins = 1
+	}
+	if mins < 60 {
+		// Sub-hour steps must divide 60 or the last window of each hour is
+		// short. 31–59m has no such step, so it falls through to hourly.
+		if step := snapDivisor(mins, 60); step < 60 {
+			return jitteredCalendarTrigger(fmt.Sprintf("*:0/%d:00", step), time.Duration(step)*time.Minute)
+		}
+		mins = 60
+	}
+
+	hours := snapDivisor((mins+30)/60, 24)
+	span := time.Duration(hours) * time.Hour
+	if hours >= 24 {
+		return jitteredCalendarTrigger("00:00:00", span)
+	}
+	if hours == 1 {
+		return jitteredCalendarTrigger("*:00:00", span)
+	}
+	slots := make([]string, 0, 24/hours)
+	for h := 0; h < 24; h += hours {
+		slots = append(slots, fmt.Sprintf("%02d", h))
+	}
+	return jitteredCalendarTrigger(fmt.Sprintf("%s:00:00", strings.Join(slots, ",")), span)
+}
+
+// snapDivisor rounds n up to the next divisor of period so the rendered
+// calendar expression repeats evenly. Rounding up rather than down keeps an
+// odd interval from silently costing more runs per day than it asked for.
+func snapDivisor(n, period int) int {
+	if n < 1 {
+		return 1
+	}
+	for i := n; i < period; i++ {
+		if period%i == 0 {
+			return i
+		}
+	}
+	return period
+}
+
+func calendarTrigger(spec string) string {
+	return fmt.Sprintf("\nOnCalendar=*-*-* %s\nPersistent=true", spec)
+}
+
+// jitteredCalendarTrigger is calendarTrigger plus a spread. Calendar
+// expressions align to the wall clock, so without this every interval loop in
+// every fleet fires on the same second — and Persistent=true means they all
+// fire together again at boot and at install. The delay is a tenth of the
+// interval, capped at a minute, which is enough to stagger them without
+// meaningfully moving any single run.
+func jitteredCalendarTrigger(spec string, d time.Duration) string {
+	jitter := d / 10
+	if jitter > time.Minute {
+		jitter = time.Minute
+	}
+	if jitter < 5*time.Second {
+		jitter = 5 * time.Second
+	}
+	return fmt.Sprintf("%s\nRandomizedDelaySec=%d", calendarTrigger(spec), int(jitter.Seconds()))
 }
