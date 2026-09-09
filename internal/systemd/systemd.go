@@ -192,6 +192,19 @@ func renderService(name string, opts Options, fleetName string, loop config.Loop
 		loopEnv += fmt.Sprintf("Environment=\"%s=%s\"\n", k, v)
 	}
 
+	// Optional resource limits. Emitted only when set, so units that don't ask
+	// for them are unchanged.
+	limits := ""
+	if loop.Nice != nil {
+		limits += fmt.Sprintf("Nice=%d\n", *loop.Nice)
+	}
+	if loop.IOClass != "" {
+		limits += fmt.Sprintf("IOSchedulingClass=%s\n", loop.IOClass)
+	}
+	if loop.CPUWeight != nil {
+		limits += fmt.Sprintf("CPUWeight=%d\n", *loop.CPUWeight)
+	}
+
 	// Every loop talks to something over the network (GitHub, an LLM, a site
 	// being scraped), and the timers are Persistent=true, so at boot they all
 	// fire the moment the timer arms. Without this the first run of each loop
@@ -209,8 +222,8 @@ WorkingDirectory=%s
 Environment="PATH=/usr/local/bin:/usr/bin:/bin"
 Environment="HOME=%s"
 Environment="FLEET_DIR=%s"
-%s%sEnvironmentFile=-/etc/default/fleet-cli
-%s`, name, fleetName, serviceType, bin, fleetName, loop.Name, opts.FleetDir, home, opts.FleetDir, extra, loopEnv, install)
+%s%s%sEnvironmentFile=-/etc/default/fleet-cli
+%s`, name, fleetName, serviceType, bin, fleetName, loop.Name, opts.FleetDir, home, opts.FleetDir, extra, loopEnv, limits, install)
 }
 
 func renderTimer(name, trigger string, loop config.Loop) string {

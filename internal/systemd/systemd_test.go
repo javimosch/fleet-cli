@@ -98,3 +98,27 @@ func TestRenderServiceWaitsForNetwork(t *testing.T) {
 		t.Errorf("network ordering must sit in [Unit], got:\n%s", unit)
 	}
 }
+
+// Resource limits are opt-in: a loop that doesn't ask for them renders exactly
+// as before, and one that does gets them in [Service].
+func TestRenderServiceResourceLimits(t *testing.T) {
+	plain := renderService("fleet-demo-x", Options{FleetDir: "/d"}, "demo", config.Loop{Name: "x"})
+	for _, k := range []string{"Nice=", "IOSchedulingClass=", "CPUWeight="} {
+		if strings.Contains(plain, k) {
+			t.Errorf("unset limits must not render %q:\n%s", k, plain)
+		}
+	}
+
+	nice, weight := 19, 10
+	unit := renderService("fleet-demo-y", Options{FleetDir: "/d"}, "demo",
+		config.Loop{Name: "y", Nice: &nice, IOClass: "idle", CPUWeight: &weight})
+	for _, want := range []string{"Nice=19", "IOSchedulingClass=idle", "CPUWeight=10"} {
+		if !strings.Contains(unit, want) {
+			t.Errorf("missing %q:\n%s", want, unit)
+		}
+	}
+	// They belong in [Service]; systemd ignores them under [Unit].
+	if svc := unit[strings.Index(unit, "[Service]"):]; !strings.Contains(svc, "Nice=19") {
+		t.Errorf("limits must sit in [Service], got:\n%s", unit)
+	}
+}

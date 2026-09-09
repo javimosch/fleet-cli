@@ -11,22 +11,22 @@ import (
 
 // Fleet is the top-level fleet configuration.
 type Fleet struct {
-	Version  int               `yaml:"version"`
-	Name     string            `yaml:"name"`
-	Repo     string            `yaml:"repo"`
-	Defaults Defaults          `yaml:"defaults"`
-	State    State             `yaml:"state"`
-	Budgets  Budgets           `yaml:"budgets"`
-	HITL     HITL              `yaml:"hitl"`
-	Loops    []Loop            `yaml:"loops"`
+	Version  int                `yaml:"version"`
+	Name     string             `yaml:"name"`
+	Repo     string             `yaml:"repo"`
+	Defaults Defaults           `yaml:"defaults"`
+	State    State              `yaml:"state"`
+	Budgets  Budgets            `yaml:"budgets"`
+	HITL     HITL               `yaml:"hitl"`
+	Loops    []Loop             `yaml:"loops"`
 	Channels map[string]Channel `yaml:"channels"`
 }
 
 // Defaults are inherited by loops unless overridden.
 type Defaults struct {
-	Timeout  string `yaml:"timeout"`
+	Timeout   string `yaml:"timeout"`
 	OnFailure string `yaml:"on_failure"`
-	Workdir  string `yaml:"workdir"`
+	Workdir   string `yaml:"workdir"`
 }
 
 // State configures the persistence backend.
@@ -37,16 +37,16 @@ type State struct {
 
 // Budgets are global rate and safety limits.
 type Budgets struct {
-	OutboundPerDay   int    `yaml:"outbound_per_day"`
-	OutboundPerHour  int    `yaml:"outbound_per_hour"`
+	OutboundPerDay    int    `yaml:"outbound_per_day"`
+	OutboundPerHour   int    `yaml:"outbound_per_hour"`
 	PerTargetCooldown string `yaml:"per_target_cooldown"`
-	QuietHours       string `yaml:"quiet_hours"`
+	QuietHours        string `yaml:"quiet_hours"`
 }
 
 // HITL configures human-in-the-loop gating.
 type HITL struct {
-	Mode       string `yaml:"mode"`
-	Channel    string `yaml:"channel"`
+	Mode        string `yaml:"mode"`
+	Channel     string `yaml:"channel"`
 	ExpireAfter string `yaml:"expire_after"`
 }
 
@@ -64,6 +64,11 @@ type Loop struct {
 	Rate             Rate              `yaml:"rate"`
 	Emits            []string          `yaml:"emits"`
 	Env              map[string]string `yaml:"env"`
+	// Resource limits, rendered straight into the unit. A maintenance loop
+	// sharing a box with heavier work should be able to yield to it.
+	Nice      *int   `yaml:"nice"`
+	IOClass   string `yaml:"io_class"`
+	CPUWeight *int   `yaml:"cpu_weight"`
 }
 
 // Rate limits a single loop.
