@@ -27,12 +27,33 @@ if [[ "$ram_pct" -gt "$RAM_MAX" ]]; then
 fi
 
 # ---- CPU ----
-# top prints one line like: %Cpu(s):  5.0 us,  3.0 sy,  0.0 ni, 91.0 id, ...
-idle=$(top -bn1 | awk '/^%Cpu\(s\):/{print $8}' | tr -d 'id,')
-if [[ -z "$idle" || "$idle" == "-" ]]; then
-  idle=100
-fi
-cpu_pct=$(awk -v i="$idle" 'BEGIN { v=100-i; if(v<0) v=0; if(v>100) v=100; printf "%.0f", v }')
+# Measured from a /proc/stat delta rather than `top -bn1`, whose first sample
+# reports averages since boot, and whose "%Cpu(s):" line shifts fields when a
+# value reaches 100.0 (top prints "0.0 ni,100.0 id" with no space).
+#
+# Nice'd time is counted as available, not as pressure. A nice'd process yields
+# the CPU to anything at normal priority by definition, so treating it as load
+# means one background job blocks every fleet loop indefinitely — which is
+# exactly what an `mtlm train` at nice 5 was doing on rbm21: over 100 skipped
+# runs in 24h while the fleet had the CPU any time it asked for it.
+read_cpu() {
+  awk '/^cpu /{
+    user=$2; nice=$3; sys=$4; idle=$5; iowait=$6; irq=$7; softirq=$8; steal=$9
+    total=user+nice+sys+idle+iowait+irq+softirq+steal
+    # available = genuinely idle + whatever nice'"'"'d work would yield
+    print total, idle+iowait+nice
+  }' /proc/stat
+}
+read -r t1 a1 <<< "$(read_cpu)"
+sleep 1
+read -r t2 a2 <<< "$(read_cpu)"
+cpu_pct=$(awk -v t1="$t1" -v a1="$a1" -v t2="$t2" -v a2="$a2" 'BEGIN {
+  dt = t2 - t1; da = a2 - a1
+  if (dt <= 0) { print 0; exit }
+  v = 100 * (dt - da) / dt
+  if (v < 0) v = 0; if (v > 100) v = 100
+  printf "%.0f", v
+}')
 log "fleet-guard: CPU ${cpu_pct}%"
 if [[ "$cpu_pct" -gt "$CPU_MAX" ]]; then
   echo "fleet-guard: CPU ${cpu_pct}% > ${CPU_MAX}%, skipping run" >&2
