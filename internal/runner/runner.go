@@ -13,6 +13,7 @@ import (
 
 	"github.com/javimosch/fleet-cli/internal/channels"
 	"github.com/javimosch/fleet-cli/internal/config"
+	"github.com/javimosch/fleet-cli/internal/hart"
 	"github.com/javimosch/fleet-cli/internal/hitl"
 	"github.com/javimosch/fleet-cli/internal/state"
 )
@@ -26,6 +27,16 @@ type Result struct {
 	Cost        map[string]interface{}   `json:"cost"`
 	DryRun      bool                     `json:"dry_run"`
 	Log         string                   `json:"log"`
+	Published   *Published               `json:"published,omitempty"`
+}
+
+// Published records where a loop's artifact ended up.
+type Published struct {
+	Kind  string `json:"kind"`
+	Owner string `json:"owner"`
+	ID    string `json:"id"`
+	URL   string `json:"url"`
+	Bytes int    `json:"bytes"`
 }
 
 // Event is an edge emitted by a loop.
@@ -118,6 +129,26 @@ func Run(ctx context.Context, fleet *config.Fleet, loop *config.Loop, fleetDir s
 					return res, fmt.Errorf("state append %s: %w", k, err)
 				}
 			}
+		}
+	}
+
+	// Publish the loop's artifact, if it declared one. This runs after state is
+	// applied so a loop that both mutates state and publishes is consistent, and
+	// before proposals so a failed publish stops the chain rather than half of it.
+	if loop.Publish != nil && loop.Publish.Kind != "" {
+		pub, perr := publishArtifact(ctx, fleet, loop, runDir, dryRun)
+		if perr != nil {
+			return res, fmt.Errorf("publish: %w", perr)
+		}
+		if pub != nil {
+			res.Published = pub
+			res.Events = append(res.Events, Event{
+				Name: "artifact.published",
+				Data: map[string]interface{}{
+					"kind": pub.Kind, "owner": pub.Owner, "id": pub.ID,
+					"url": pub.URL, "bytes": pub.Bytes,
+				},
+			})
 		}
 	}
 
@@ -285,4 +316,50 @@ func stateDir() string {
 		d = filepath.Join(home, ".local", "share", "fleet-cli")
 	}
 	return d
+}
+
+// publishArtifact uploads the file a loop left in its run dir. A loop that
+// declares publish but writes nothing is not an error — some reports have
+// nothing to say on a given day — but an artifact that exists and fails to
+// upload is, because publishing is the whole point of those loops.
+func publishArtifact(ctx context.Context, fleet *config.Fleet, loop *config.Loop, runDir string, dryRun bool) (*Published, error) {
+	p := loop.Publish
+	if p.Kind != "hart" {
+		return nil, fmt.Errorf("unsupported publish kind %q", p.Kind)
+	}
+
+	name := p.File
+	if name == "" {
+		name = "artifact.html"
+	}
+	html, err := os.ReadFile(filepath.Join(runDir, name))
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", name, err)
+	}
+	if len(bytes.TrimSpace(html)) == 0 {
+		return nil, nil
+	}
+
+	id := p.ID
+	if id == "" {
+		id = fleet.Name
+	}
+	owner := p.Owner
+	if owner == "" {
+		owner = hart.OwnerFromRepo(fleet.Repo)
+	}
+
+	if dryRun {
+		return &Published{Kind: p.Kind, Owner: owner, ID: id, Bytes: len(html),
+			URL: "(dry-run, not published)"}, nil
+	}
+
+	r, err := hart.Publish(ctx, hart.FromEnv(), owner, id, p.Visibility, html)
+	if err != nil {
+		return nil, err
+	}
+	return &Published{Kind: p.Kind, Owner: owner, ID: id, URL: r.URL, Bytes: r.Bytes}, nil
 }

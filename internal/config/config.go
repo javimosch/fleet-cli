@@ -69,6 +69,22 @@ type Loop struct {
 	Nice      *int   `yaml:"nice"`
 	IOClass   string `yaml:"io_class"`
 	CPUWeight *int   `yaml:"cpu_weight"`
+
+	Publish *Publish `yaml:"publish"`
+}
+
+// Publish declares that a loop produces an artifact to be pushed somewhere once
+// it succeeds. fleet.yml has accepted this block since the beginning and
+// silently ignored it, so every loop that wanted it re-implemented the upload by
+// hand — four of them, each with its own curl and its own bugs.
+type Publish struct {
+	Kind string `yaml:"kind"`
+	ID   string `yaml:"id"`
+	// Owner defaults to the owner half of the fleet's repo.
+	Owner      string `yaml:"owner"`
+	Visibility string `yaml:"visibility"`
+	// File is the artifact the loop leaves in $FLEET_RUN_DIR.
+	File string `yaml:"file"`
 }
 
 // Rate limits a single loop.
