@@ -78,3 +78,23 @@ func TestRenderTimerHasSinglePersistent(t *testing.T) {
 		t.Errorf("rendered timer has %d Persistent= lines, want 1:\n%s", n, unit)
 	}
 }
+
+// Timers are Persistent=true, so at boot the first run fires as soon as the
+// timer arms. Every loop makes network calls, so the service must wait for the
+// network or it dies on "error connecting to api.github.com" — which is exactly
+// what happened on rbm21 the first time the box rebooted after the switch to
+// calendar triggers.
+func TestRenderServiceWaitsForNetwork(t *testing.T) {
+	unit := renderService("fleet-demo-observe", Options{FleetDir: "/root/fleets/demo"},
+		"demo", config.Loop{Name: "observe"})
+	for _, want := range []string{"Wants=network-online.target", "After=network-online.target"} {
+		if !strings.Contains(unit, want) {
+			t.Errorf("rendered service is missing %q:\n%s", want, unit)
+		}
+	}
+	// Both belong in [Unit]; systemd ignores them under [Service].
+	unitSection := unit[:strings.Index(unit, "[Service]")]
+	if !strings.Contains(unitSection, "After=network-online.target") {
+		t.Errorf("network ordering must sit in [Unit], got:\n%s", unit)
+	}
+}

@@ -192,8 +192,15 @@ func renderService(name string, opts Options, fleetName string, loop config.Loop
 		loopEnv += fmt.Sprintf("Environment=\"%s=%s\"\n", k, v)
 	}
 
+	// Every loop talks to something over the network (GitHub, an LLM, a site
+	// being scraped), and the timers are Persistent=true, so at boot they all
+	// fire the moment the timer arms. Without this the first run of each loop
+	// races DHCP and dies on "error connecting to api.github.com". The old
+	// monotonic OnBootSec=2min triggers hid this by accident.
 	return fmt.Sprintf(`[Unit]
 Description=Fleet loop %s for %s
+Wants=network-online.target
+After=network-online.target
 
 [Service]
 Type=%s
