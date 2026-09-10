@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestPublishSendsTheDocumentedShape(t *testing.T) {
@@ -162,5 +163,59 @@ func TestPublishPrivateVerifiesTheGate(t *testing.T) {
 		if !tc.wantErr && err != nil {
 			t.Errorf("anon %d: unexpected error: %v", tc.status, err)
 		}
+	}
+}
+
+// hart allows 10 submits a minute and the timers fire in bursts at boot, so a
+// 429 has to be waited out rather than losing the artifact.
+func TestPublishRetriesOn429(t *testing.T) {
+	orig := retryDelays
+	retryDelays = []time.Duration{time.Millisecond, time.Millisecond, time.Millisecond}
+	defer func() { retryDelays = orig }()
+
+	var attempts int
+	var lastBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		b, _ := io.ReadAll(r.Body)
+		lastBody = string(b)
+		if attempts < 3 {
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		w.Write([]byte(`{"url":"https://h/a/o/a"}`))
+	}))
+	defer srv.Close()
+
+	got, err := Publish(context.Background(), Config{BaseURL: srv.URL, OwnerKey: "k"},
+		"o", "a", "", []byte("<p>x</p>"))
+	if err != nil {
+		t.Fatalf("should have succeeded on the third attempt: %v", err)
+	}
+	if attempts != 3 {
+		t.Errorf("attempts = %d, want 3", attempts)
+	}
+	// The body must be re-sent each time, not consumed by the first attempt.
+	if lastBody != "<p>x</p>" {
+		t.Errorf("retry sent body %q, want the original", lastBody)
+	}
+	if got.URL != "https://h/a/o/a" {
+		t.Errorf("URL = %q", got.URL)
+	}
+}
+
+func TestPublishGivesUpAfterRetries(t *testing.T) {
+	orig := retryDelays
+	retryDelays = []time.Duration{time.Millisecond}
+	defer func() { retryDelays = orig }()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+	if _, err := Publish(context.Background(), Config{BaseURL: srv.URL, OwnerKey: "k"},
+		"o", "a", "", []byte("<p>x</p>")); err == nil {
+		t.Fatal("want an error when hart keeps refusing")
 	}
 }

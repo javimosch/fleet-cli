@@ -21,12 +21,17 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
 
 // DefaultURL is used when HART_URL is unset.
 const DefaultURL = "https://hart.intrane.fr"
+
+// retryDelays are the waits between attempts when hart answers 429. Its window
+// is a minute, so the last wait clears it outright.
+var retryDelays = []time.Duration{5 * time.Second, 20 * time.Second, 40 * time.Second}
 
 // Result is what a successful publish returns.
 type Result struct {
@@ -94,15 +99,39 @@ func Publish(ctx context.Context, cfg Config, owner, artifact, visibility string
 	req.Header.Set("Content-Type", "text/html")
 	req.Header.Set("X-Hart-Owner-Key", cfg.OwnerKey)
 
-	resp, err := (&http.Client{Timeout: 60 * time.Second}).Do(req)
-	if err != nil {
-		return Result{}, fmt.Errorf("post to hart: %w", err)
-	}
-	defer resp.Body.Close()
+	// hart allows 10 submits a minute. That is easy to exceed: the timers are
+	// Persistent=true, so at boot every publishing loop fires at once. Back off
+	// and retry rather than losing an artifact to a burst.
+	var body []byte
+	var status int
+	for attempt := 0; ; attempt++ {
+		req.Body = io.NopCloser(bytes.NewReader(html))
+		resp, err := (&http.Client{Timeout: 60 * time.Second}).Do(req)
+		if err != nil {
+			return Result{}, fmt.Errorf("post to hart: %w", err)
+		}
+		body, _ = io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+		status = resp.StatusCode
+		resp.Body.Close()
 
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return Result{}, fmt.Errorf("hart returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		if status != http.StatusTooManyRequests || attempt >= len(retryDelays) {
+			break
+		}
+		wait := retryDelays[attempt]
+		if ra := resp.Header.Get("Retry-After"); ra != "" {
+			if secs, convErr := strconv.Atoi(strings.TrimSpace(ra)); convErr == nil && secs > 0 {
+				wait = time.Duration(secs) * time.Second
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return Result{}, ctx.Err()
+		case <-time.After(wait):
+		}
+	}
+
+	if status < 200 || status >= 300 {
+		return Result{}, fmt.Errorf("hart returned %d: %s", status, strings.TrimSpace(string(body)))
 	}
 
 	out := Result{Bytes: len(html)}
