@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -94,6 +95,72 @@ func TestOwnerFromRepo(t *testing.T) {
 	} {
 		if got := OwnerFromRepo(in); got != want {
 			t.Errorf("OwnerFromRepo(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// visibility: private needs a read key, which is a credential and so comes from
+// the environment rather than the fleet definition.
+func TestPublishPrivateSendsReadKey(t *testing.T) {
+	var gotQuery string
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			w.WriteHeader(http.StatusUnauthorized) // the gating check
+			return
+		}
+		gotQuery = r.URL.RawQuery
+		w.Write([]byte(`{"url":"` + srv.URL + `/a/o/a"}`))
+	}))
+	defer srv.Close()
+
+	cfg := Config{BaseURL: srv.URL, OwnerKey: "k", ReadKey: "rk"}
+	if _, err := Publish(context.Background(), cfg, "o", "a", "private", []byte("<p>x</p>")); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(gotQuery, "read_key=rk") || !strings.Contains(gotQuery, "visibility=private") {
+		t.Errorf("query = %q, want visibility=private and read_key=rk", gotQuery)
+	}
+
+	// ...and must refuse rather than silently publish something unreadable.
+	if _, err := Publish(context.Background(), Config{BaseURL: srv.URL, OwnerKey: "k"},
+		"o", "a", "private", []byte("<p>x</p>")); err == nil {
+		t.Error("want an error when HART_READ_KEY is missing")
+	}
+}
+
+// A private artifact readable without credentials is worse than a failed
+// publish, because it looks like success.
+func TestPublishPrivateVerifiesTheGate(t *testing.T) {
+	var anonStatus int
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			w.WriteHeader(anonStatus)
+			return
+		}
+		// Point the artifact URL back at this server so the gating check hits it.
+		w.Write([]byte(`{"url":"` + srv.URL + `/a/o/a"}`))
+	}))
+	defer srv.Close()
+	cfg := Config{BaseURL: srv.URL, OwnerKey: "k", ReadKey: "rk"}
+
+	for _, tc := range []struct {
+		status  int
+		wantErr bool
+	}{
+		{http.StatusUnauthorized, false},
+		{http.StatusForbidden, false},
+		{http.StatusFound, false}, // a redirect to a login page is still a refusal
+		{http.StatusOK, true},     // wide open — must fail loudly
+	} {
+		anonStatus = tc.status
+		_, err := Publish(context.Background(), cfg, "o", "a", "private", []byte("<p>x</p>"))
+		if tc.wantErr && err == nil {
+			t.Errorf("anon %d: want an error", tc.status)
+		}
+		if !tc.wantErr && err != nil {
+			t.Errorf("anon %d: unexpected error: %v", tc.status, err)
 		}
 	}
 }

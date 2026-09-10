@@ -32,12 +32,18 @@ const DefaultURL = "https://hart.intrane.fr"
 type Result struct {
 	URL   string `json:"url"`
 	Bytes int    `json:"bytes"`
+	// Gated is set when a private artifact was verified to refuse anonymous reads.
+	Gated bool `json:"gated,omitempty"`
 }
 
 // Config is resolved from the environment.
 type Config struct {
 	BaseURL  string
 	OwnerKey string
+	// ReadKey is sent alongside visibility=private so the artifact can be read
+	// with a shared link. It is a credential, so it comes from the environment
+	// rather than fleet.yml.
+	ReadKey string
 }
 
 // FromEnv reads the hart settings. fleet-cli is a compiled binary, so it never
@@ -48,7 +54,11 @@ func FromEnv() Config {
 	if base == "" {
 		base = DefaultURL
 	}
-	return Config{BaseURL: base, OwnerKey: os.Getenv("HART_OWNER_KEY")}
+	return Config{
+		BaseURL:  base,
+		OwnerKey: os.Getenv("HART_OWNER_KEY"),
+		ReadKey:  os.Getenv("HART_READ_KEY"),
+	}
 }
 
 // Publish uploads html as owner/artifact and returns the artifact URL.
@@ -68,6 +78,12 @@ func Publish(ctx context.Context, cfg Config, owner, artifact, visibility string
 	q.Set("artifact", artifact)
 	if visibility != "" {
 		q.Set("visibility", visibility)
+	}
+	if visibility == "private" {
+		if cfg.ReadKey == "" {
+			return Result{}, fmt.Errorf("visibility private needs HART_READ_KEY")
+		}
+		q.Set("read_key", cfg.ReadKey)
 	}
 	endpoint := cfg.BaseURL + "/v1/publish?" + q.Encode()
 
@@ -100,7 +116,43 @@ func Publish(ctx context.Context, cfg Config, owner, artifact, visibility string
 	} else {
 		out.URL = fmt.Sprintf("%s/a/%s/%s", cfg.BaseURL, owner, artifact)
 	}
+
+	// A private artifact that is readable without credentials is worse than a
+	// failed publish, because it looks like a success. Prove the gate rather
+	// than trusting it.
+	if visibility == "private" {
+		if err := verifyGated(ctx, out.URL); err != nil {
+			return out, err
+		}
+		out.Gated = true
+	}
 	return out, nil
+}
+
+// verifyGated fetches the artifact with no credentials and requires a refusal.
+func verifyGated(ctx context.Context, artifactURL string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, artifactURL, nil)
+	if err != nil {
+		return fmt.Errorf("build gating check: %w", err)
+	}
+	client := &http.Client{
+		Timeout: 20 * time.Second,
+		// Follow no redirects: a redirect to a login page is still a refusal,
+		// and following it could turn a 302 into a 200.
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("gating check for %s: %w", artifactURL, err)
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden ||
+		(resp.StatusCode >= 300 && resp.StatusCode < 400) {
+		return nil
+	}
+	return fmt.Errorf("published %s as private but an anonymous fetch returned %d — it is not gated",
+		artifactURL, resp.StatusCode)
 }
 
 // OwnerFromRepo takes the owner half of an "owner/name" repo string.
