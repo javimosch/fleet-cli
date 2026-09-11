@@ -123,6 +123,15 @@ func Publish(ctx context.Context, cfg Config, owner, artifact, visibility string
 				wait = time.Duration(secs) * time.Second
 			}
 		}
+		// Never sleep past the caller's deadline. The full schedule is 65s of
+		// backoff and the default loop timeout is 60s, so a rate-limited publish
+		// used to be arithmetically unable to succeed: it burned the whole budget
+		// in time.After and surfaced as "context deadline exceeded", which says
+		// nothing about the rate limit that actually caused it. Stop early
+		// instead and let the 429 be reported as itself.
+		if dl, hasDeadline := ctx.Deadline(); hasDeadline && time.Until(dl) <= wait+time.Second {
+			break
+		}
 		select {
 		case <-ctx.Done():
 			return Result{}, ctx.Err()
