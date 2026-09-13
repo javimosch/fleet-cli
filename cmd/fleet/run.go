@@ -14,8 +14,11 @@ import (
 
 // loopOutput is the JSON shape of one loop run.
 type loopOutput struct {
-	Loop      string                 `json:"loop"`
-	Status    string                 `json:"status"`
+	Loop   string `json:"loop"`
+	Status string `json:"status"`
+	// Skipped carries why an outbound loop did not run -- a budget or a
+	// quiet-hours window. Status is "skipped", not "error": nothing failed.
+	Skipped   string                 `json:"skipped,omitempty"`
 	DryRun    bool                   `json:"dry_run"`
 	Events    []runner.Event         `json:"events"`
 	Proposals int                    `json:"proposals"`
@@ -64,7 +67,10 @@ func cmdRun(args []string) int {
 
 	if noChain {
 		lo := runOneLoop(ctx, fleet, fleetDir, st, q, dryRun, loopName)
-		if lo.Status != "ok" {
+		// "skipped" is a success: an outbound budget or a quiet-hours window
+		// said not to run, which is the setting doing its job. Treating it as a
+		// failure would make every enforced limit page whoever is on call.
+		if lo.Status != "ok" && lo.Status != "skipped" {
 			failCode(105, "loop_failed", fmt.Sprintf("run %s: %s\n%s", loopName, lo.Status, lo.Log), "inspect the loop log and retry deliberately")
 		}
 		outputJSON(lo)
@@ -75,7 +81,7 @@ func cmdRun(args []string) int {
 	if err != nil {
 		failCode(105, "loop_chain_failed", fmt.Sprintf("run chain: %v", err), "inspect the loop log and retry deliberately")
 	}
-	if sum.Status != "ok" {
+	if sum.Status != "ok" && sum.Status != "skipped" {
 		failCode(105, "loop_failed", fmt.Sprintf("run %s: %s\n%s", loopName, sum.Status, sum.Log), "inspect the loop log and retry deliberately")
 	}
 	outputJSON(sum)
@@ -95,9 +101,14 @@ func runOneLoop(ctx context.Context, fleet *config.Fleet, fleetDir string, st *s
 	if err != nil {
 		logText = logText + "\n" + err.Error()
 	}
+	st8 := status(err)
+	if err == nil && res.Skipped != "" {
+		st8 = "skipped"
+	}
 	lo := loopOutput{
 		Loop:      loopName,
-		Status:    status(err),
+		Status:    st8,
+		Skipped:   res.Skipped,
 		DryRun:    dryRun,
 		Events:    res.Events,
 		Proposals: len(res.Proposals),

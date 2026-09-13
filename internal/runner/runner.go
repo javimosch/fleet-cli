@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/javimosch/fleet-cli/internal/budget"
 	"github.com/javimosch/fleet-cli/internal/channels"
 	"github.com/javimosch/fleet-cli/internal/config"
 	"github.com/javimosch/fleet-cli/internal/hart"
@@ -28,6 +29,10 @@ type Result struct {
 	DryRun      bool                     `json:"dry_run"`
 	Log         string                   `json:"log"`
 	Published   *Published               `json:"published,omitempty"`
+	// Skipped is set when the loop did not run because an outbound budget or a
+	// quiet-hours window said not to. It is not a failure: the exit status is 0
+	// and the reason is the answer.
+	Skipped string `json:"skipped,omitempty"`
 }
 
 // Published records where a loop's artifact ended up.
@@ -60,6 +65,24 @@ func Run(ctx context.Context, fleet *config.Fleet, loop *config.Loop, fleetDir s
 	runDir := filepath.Join(os.TempDir(), "fleet-cli-runs", runID)
 	if err := os.MkdirAll(runDir, 0o755); err != nil {
 		return Result{}, fmt.Errorf("mkdir run dir: %w", err)
+	}
+
+	// Outbound budgets, enforced here because this is the only place every
+	// outbound loop passes through. fleet.yml has advertised outbound_per_day,
+	// outbound_per_hour and quiet_hours for a long time while fleet-cli parsed
+	// and ignored all three; a fleet could declare "five a day, none at night"
+	// and send whatever it liked. Skipping is not an error -- the loop simply
+	// did not run, and says why.
+	if loop.Outbound && !dryRun && st != nil {
+		log := budget.Decode(func() interface{} { v, _ := st.Get(budget.LogKey); return v }())
+		d, derr := budget.Check(fleet.Budgets.OutboundPerDay, fleet.Budgets.OutboundPerHour,
+			fleet.Budgets.QuietHours, log, time.Now())
+		if derr != nil {
+			return Result{}, fmt.Errorf("budget: %w", derr)
+		}
+		if !d.Allowed {
+			return Result{DryRun: dryRun, Skipped: d.Reason}, nil
+		}
 	}
 
 	cmd := exec.CommandContext(ctx, cmdPath)
@@ -115,6 +138,32 @@ func Run(ctx context.Context, fleet *config.Fleet, loop *config.Loop, fleetDir s
 		return res, fmt.Errorf("parse outputs: %w", err)
 	}
 	res.DryRun = dryRun
+
+	// Record what actually went out, so the next run's check is accurate.
+	// `action.executed` is the event every outbound loop already emits, and its
+	// `count` is the number of things that left the machine; a dry run reports
+	// dry_run:true and contributes nothing.
+	if loop.Outbound && !dryRun && st != nil {
+		sent := 0
+		for _, e := range res.Events {
+			if e.Name != "action.executed" {
+				continue
+			}
+			if dr, ok := e.Data["dry_run"].(bool); ok && dr {
+				continue
+			}
+			if c, ok := e.Data["count"].(float64); ok {
+				sent += int(c)
+			}
+		}
+		if sent > 0 {
+			log := budget.Decode(func() interface{} { v, _ := st.Get(budget.LogKey); return v }())
+			log = budget.Record(log, sent, time.Now())
+			if err := st.Set(budget.LogKey, budget.Encode(log)); err != nil {
+				return res, fmt.Errorf("record outbound budget: %w", err)
+			}
+		}
+	}
 
 	// Apply state mutations (only when not dry-running).
 	if !dryRun {
