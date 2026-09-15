@@ -54,6 +54,8 @@ func main() {
 		os.Exit(cmdQueue(tail))
 	case "draft":
 		os.Exit(cmdDraft(tail))
+	case "redraft":
+		os.Exit(cmdRedraft(tail))
 	case "relais-poll":
 		os.Exit(cmdRelaisPoll(tail))
 	case "approve", "reject":
@@ -83,7 +85,8 @@ Commands:
   status <fleet>
   queue <fleet>
   draft list <fleet>
-  draft fill <fleet> <proposal-id> --body-file <path>
+  draft fill <fleet> <proposal-id> --body-file <path> [--subject <s>]
+  redraft <fleet> <proposal-id>
   dispatched <fleet> <proposal-id>
   approve <fleet> <proposal-id> [--reason <reason>]
   reject <fleet> <proposal-id> [--reason <reason>]
@@ -347,7 +350,7 @@ func cmdQueue(args []string) int {
 // multi-line and an LLM loop writing it through a shell argument is one
 // quoting bug away from a truncated or mangled message.
 func cmdDraft(args []string) int {
-	usage := "usage: fleet draft list <fleet> | fleet draft fill <fleet> <proposal-id> --body-file <path>"
+	usage := "usage: fleet draft list <fleet> | fleet draft fill <fleet> <proposal-id> --body-file <path> [--subject <s>]"
 	if len(args) < 2 {
 		failCode(80, "invalid_arguments", usage, "fleet help-json")
 	}
@@ -373,12 +376,19 @@ func cmdDraft(args []string) int {
 		outputJSON(drafts)
 		return 0
 	case "fill":
-		bodyFile := ""
+		bodyFile, subject := "", ""
 		clean := make([]string, 0, len(args))
 		for i := 0; i < len(args); i++ {
-			if args[i] == "--body-file" {
+			switch args[i] {
+			case "--body-file":
 				if i+1 < len(args) {
 					bodyFile = args[i+1]
+					i++
+				}
+				continue
+			case "--subject":
+				if i+1 < len(args) {
+					subject = args[i+1]
 					i++
 				}
 				continue
@@ -393,10 +403,11 @@ func cmdDraft(args []string) int {
 			failCode(92, "body_unreadable", fmt.Sprintf("read %s: %v", bodyFile, err), "write the body to a file first")
 		}
 		id := clean[2]
-		if err := q.SetBody(id, string(body)); err != nil {
+		if err := q.SetDraft(id, subject, string(body)); err != nil {
 			failCode(92, "draft_not_fillable", fmt.Sprintf("set body: %v", err), "fleet draft list <fleet>")
 		}
-		outputJSON(map[string]interface{}{"ok": true, "proposal_id": id, "status": hitl.Pending, "bytes": len(body)})
+		outputJSON(map[string]interface{}{"ok": true, "proposal_id": id, "status": hitl.Pending,
+			"bytes": len(body), "subject": subject})
 		return 0
 	}
 	failCode(80, "invalid_arguments", usage, "fleet help-json")
@@ -438,6 +449,26 @@ func cmdDispatched(args []string) int {
 		failCode(92, "proposal_not_found", fmt.Sprintf("update status: %v", err), "fleet queue <fleet>")
 	}
 	outputJSON(map[string]interface{}{"ok": true, "proposal_id": id, "status": hitl.Dispatched})
+	return 0
+}
+
+// cmdRedraft returns a pending proposal to drafting so its copy is rewritten.
+func cmdRedraft(args []string) int {
+	if len(args) < 2 {
+		failCode(80, "invalid_arguments", "usage: fleet redraft <fleet> <proposal-id>", "fleet help-json")
+	}
+	fleet, _, err := loadFleet(args[0])
+	if err != nil {
+		failCode(92, "resource_not_found", fmt.Sprintf("load fleet: %v", err), "fleet init --name <name> --repo <owner/name>")
+	}
+	_, q, err := openStores(fleet)
+	if err != nil {
+		failCode(90, "state_unavailable", fmt.Sprintf("open stores: %v", err), "set FLEET_STATE_DIR to a writable directory")
+	}
+	if err := q.Redraft(args[1]); err != nil {
+		failCode(92, "not_redraftable", fmt.Sprintf("redraft: %v", err), "fleet queue <fleet>")
+	}
+	outputJSON(map[string]interface{}{"ok": true, "proposal_id": args[1], "status": hitl.Drafting})
 	return 0
 }
 

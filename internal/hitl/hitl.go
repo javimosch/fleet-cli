@@ -201,7 +201,12 @@ func (q *Queue) SetRelais(id string, r *ProposalRelais) error {
 // property: copy can only be written before a human has seen the proposal, so
 // no later step can swap the body out from under an approval. BodyHash is
 // recomputed here and frozen from this point on.
-func (q *Queue) SetBody(id, body string) error {
+func (q *Queue) SetBody(id, body string) error { return q.SetDraft(id, "", body) }
+
+// SetDraft writes the copy for a drafting proposal and promotes it to Pending.
+// subject is optional and lands in meta.subject, which is what the send handler
+// reads; an empty subject leaves whatever was there.
+func (q *Queue) SetDraft(id, subject, body string) error {
 	if strings.TrimSpace(body) == "" {
 		return fmt.Errorf("refusing to set an empty body on %s", id)
 	}
@@ -221,7 +226,39 @@ func (q *Queue) SetBody(id, body string) error {
 		}
 		proposals[i].Body = body
 		proposals[i].BodyHash = hash(body)
+		if subject != "" {
+			if proposals[i].Meta == nil {
+				proposals[i].Meta = map[string]interface{}{}
+			}
+			proposals[i].Meta["subject"] = subject
+		}
 		proposals[i].Status = Pending
+		return q.writeAllLocked(proposals)
+	}
+	return fmt.Errorf("proposal %s not found", id)
+}
+
+// Redraft sends a pending proposal back to Drafting so its copy can be written
+// again. Only from Pending: once a human has approved something, the text they
+// approved is the text that goes, and rewriting it would make the approval a
+// signature on a document that no longer exists.
+func (q *Queue) Redraft(id string) error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	proposals, err := q.readAllLocked()
+	if err != nil {
+		return err
+	}
+	for i := range proposals {
+		if proposals[i].ID != id {
+			continue
+		}
+		if proposals[i].Status != Pending {
+			return fmt.Errorf("proposal %s is %s -- only a pending proposal can go back to drafting", id, proposals[i].Status)
+		}
+		proposals[i].Body = ""
+		proposals[i].BodyHash = hash("")
+		proposals[i].Status = Drafting
 		return q.writeAllLocked(proposals)
 	}
 	return fmt.Errorf("proposal %s not found", id)
