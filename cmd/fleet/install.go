@@ -28,11 +28,15 @@ func cmdInstall(args []string) int {
 	if len(positional) < 1 {
 		failCode(80, "invalid_arguments", "usage: fleet install <fleet> [--system] [--no-start]", "fleet help-json")
 	}
-	fleetName := positional[0]
-	fleet, fleetDir, err := loadFleet(fleetName)
+	fleet, fleetDir, err := loadFleet(positional[0])
 	if err != nil {
 		failCode(92, "resource_not_found", fmt.Sprintf("load fleet: %v", err), "fleet init --name <name> --repo <owner/name>")
 	}
+	// The unit names come from fleet.Name, which is what systemd.Install writes.
+	// Taking them from the argument instead worked only while the argument was
+	// always the fleet's own name -- `fleet install .` rendered the right files
+	// and then tried to enable "fleet-.-screen.timer".
+	fleetName := fleet.Name
 
 	bin, err := binaryPath()
 	if err != nil {
