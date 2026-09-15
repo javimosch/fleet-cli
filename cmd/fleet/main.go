@@ -58,6 +58,8 @@ func main() {
 		os.Exit(cmdRelaisPoll(tail))
 	case "approve", "reject":
 		os.Exit(cmdDecision(cmd, tail))
+	case "dispatched":
+		os.Exit(cmdDispatched(tail))
 	case "state":
 		os.Exit(cmdState(tail))
 	case "install":
@@ -82,6 +84,7 @@ Commands:
   queue <fleet>
   draft list <fleet>
   draft fill <fleet> <proposal-id> --body-file <path>
+  dispatched <fleet> <proposal-id>
   approve <fleet> <proposal-id> [--reason <reason>]
   reject <fleet> <proposal-id> [--reason <reason>]
   relais-poll <fleet>
@@ -389,6 +392,44 @@ func cmdDraft(args []string) int {
 	}
 	failCode(80, "invalid_arguments", usage, "fleet help-json")
 	return 80
+}
+
+// cmdDispatched marks an approved proposal as having been carried out.
+//
+// This is the queue's own record that the action left, and it is deliberately
+// redundant with whatever bookkeeping a fleet keeps in its JSON state: an
+// approved proposal with dispatched_at still null looks, to every consumer,
+// exactly like one that has never been acted on. For a cold-email fleet that
+// difference is a stranger receiving the same message twice.
+func cmdDispatched(args []string) int {
+	if len(args) < 2 {
+		failCode(80, "invalid_arguments", "usage: fleet dispatched <fleet> <proposal-id>", "fleet help-json")
+	}
+	fleet, _, err := loadFleet(args[0])
+	if err != nil {
+		failCode(92, "resource_not_found", fmt.Sprintf("load fleet: %v", err), "fleet init --name <name> --repo <owner/name>")
+	}
+	_, q, err := openStores(fleet)
+	if err != nil {
+		failCode(90, "state_unavailable", fmt.Sprintf("open stores: %v", err), "set FLEET_STATE_DIR to a writable directory")
+	}
+	id := args[1]
+
+	// Already dispatched is success, not an error. The caller is a loop that may
+	// well re-run after a partial failure, and making it distinguish "I marked
+	// it" from "it was already marked" only invites it to get that wrong.
+	all, _ := q.List("")
+	for _, p := range all {
+		if p.ID == id && p.DispatchedAt != nil {
+			outputJSON(map[string]interface{}{"ok": true, "proposal_id": id, "status": p.Status, "already": true})
+			return 0
+		}
+	}
+	if err := q.UpdateStatus(id, hitl.Dispatched, "", ""); err != nil {
+		failCode(92, "proposal_not_found", fmt.Sprintf("update status: %v", err), "fleet queue <fleet>")
+	}
+	outputJSON(map[string]interface{}{"ok": true, "proposal_id": id, "status": hitl.Dispatched})
+	return 0
 }
 
 // cmdRelaisPoll checks relais inboxes for pending proposals and applies decisions.
