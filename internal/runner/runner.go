@@ -163,9 +163,14 @@ func Run(ctx context.Context, fleet *config.Fleet, loop *config.Loop, fleetDir s
 			}
 		}
 		if sent > 0 {
-			log := budget.Decode(func() interface{} { v, _ := st.Get(budget.LogKey); return v }())
-			log = budget.Record(log, sent, time.Now())
-			if err := st.Set(budget.LogKey, budget.Encode(log)); err != nil {
+			// Read and write in one critical section. As a Get followed by a Set
+			// this was the one place where losing a concurrent write has a real
+			// consequence: two sends recorded against the same snapshot means one
+			// of them vanishes from the log and the daily outbound cap
+			// undercounts, i.e. permits more mail than it says it does.
+			if err := st.Update(budget.LogKey, func(cur interface{}) interface{} {
+				return budget.Encode(budget.Record(budget.Decode(cur), sent, time.Now()))
+			}); err != nil {
 				return res, fmt.Errorf("record outbound budget: %w", err)
 			}
 		}

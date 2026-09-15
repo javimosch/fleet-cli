@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -33,11 +34,91 @@ const (
 	runsCompactBytes = 2 << 20
 )
 
-// Store is a thread-safe JSON file store.
+// Store is a JSON file store, safe across goroutines AND across processes.
+//
+// The mutex alone was not enough: every loop run is a separate `fleet run`
+// process that loaded the whole map at start and wrote the whole map back at
+// the end, so two processes touching the same fleet was a read-modify-write
+// with no arbitration and the last writer silently won. That is not theory --
+// during the run-history migration a repo-activity loop still running the old
+// binary held its pre-migration map in memory and, on exit, wrote it straight
+// back over the migrated file.
+//
+// Every mutating operation now takes an exclusive flock, re-reads the file
+// underneath it, applies just its own change, and writes. So a stale process
+// can no longer clobber a key it never touched. The lock is a sibling .lock
+// file rather than the state file itself, because saveLocked swaps the state
+// file by rename -- locking the inode we are about to replace would protect
+// nothing.
 type Store struct {
 	path string
 	mu   sync.Mutex
 	data map[string]interface{}
+}
+
+// withFileLock runs fn while holding an flock on the store's lock file.
+// exclusive=false takes a shared lock, for readers that want a torn-free view.
+func (s *Store) withFileLock(exclusive bool, fn func() error) error {
+	lockPath := s.path + ".lock"
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		// A store on a filesystem that cannot hold the lock file is still a
+		// working store; refusing to write at all would be worse than the race.
+		return fn()
+	}
+	defer f.Close()
+	how := syscall.LOCK_EX
+	if !exclusive {
+		how = syscall.LOCK_SH
+	}
+	if err := syscall.Flock(int(f.Fd()), how); err != nil {
+		return fn()
+	}
+	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	return fn()
+}
+
+// reloadLocked re-reads the file into memory. Callers hold both s.mu and the
+// file lock, so what it reads is what they are about to modify.
+func (s *Store) reloadLocked() error {
+	data, err := os.ReadFile(s.path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			s.data = make(map[string]interface{})
+			return nil
+		}
+		return err
+	}
+	fresh := make(map[string]interface{})
+	if err := json.Unmarshal(data, &fresh); err != nil {
+		return fmt.Errorf("corrupt state file %s: %w", s.path, err)
+	}
+	s.data = fresh
+	return nil
+}
+
+// mutate is the one path by which state changes: lock, re-read, apply, save.
+func (s *Store) mutate(apply func()) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.withFileLock(true, func() error {
+		if err := s.reloadLocked(); err != nil {
+			return err
+		}
+		apply()
+		return s.saveLocked()
+	})
+}
+
+// Update applies fn to the current value at key and stores the result, all
+// under one lock. Use it wherever a Get would otherwise be followed by a Set:
+// read and write have to be the same critical section or two processes can
+// each read the same value and one of them loses. The budget log is exactly
+// that shape, and losing a write there means an outbound cap that undercounts.
+func (s *Store) Update(key string, fn func(current interface{}) interface{}) error {
+	return s.mutate(func() {
+		s.data[key] = fn(s.data[key])
+	})
 }
 
 // Open loads or creates a store at path.
@@ -54,7 +135,14 @@ func Open(path string) (*Store, error) {
 	} else if !os.IsNotExist(err) {
 		return nil, err
 	}
-	if err := s.migrateRunsLocked(); err != nil {
+	if err := s.withFileLock(true, func() error {
+		// Re-read under the lock: another process may have migrated already
+		// between our read above and acquiring it.
+		if err := s.reloadLocked(); err != nil {
+			return err
+		}
+		return s.migrateRunsLocked()
+	}); err != nil {
 		return nil, err
 	}
 	return s, nil
@@ -100,41 +188,39 @@ func (s *Store) migrateRunsLocked() error {
 	return s.saveLocked()
 }
 
-// Get returns a value or nil.
+// Get returns a value or nil, reading through to the file so a long-running
+// process does not answer from a snapshot another process has moved on from.
 func (s *Store) Get(key string) (interface{}, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	_ = s.withFileLock(false, func() error { return s.reloadLocked() })
 	v, ok := s.data[key]
 	return v, ok
 }
 
 // Set stores a value.
 func (s *Store) Set(key string, value interface{}) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.data[key] = value
-	return s.saveLocked()
+	return s.mutate(func() { s.data[key] = value })
 }
 
 // Append adds an item to a JSON array at key.
 func (s *Store) Append(key string, item interface{}) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	var arr []interface{}
-	if v, ok := s.data[key]; ok {
-		if existing, ok := v.([]interface{}); ok {
-			arr = existing
+	return s.mutate(func() {
+		var arr []interface{}
+		if v, ok := s.data[key]; ok {
+			if existing, ok := v.([]interface{}); ok {
+				arr = existing
+			}
 		}
-	}
-	arr = append(arr, item)
-	s.data[key] = arr
-	return s.saveLocked()
+		s.data[key] = append(arr, item)
+	})
 }
 
 // All returns a shallow copy of all data.
 func (s *Store) All() map[string]interface{} {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	_ = s.withFileLock(false, func() error { return s.reloadLocked() })
 	out := make(map[string]interface{}, len(s.data))
 	for k, v := range s.data {
 		out[k] = v
@@ -187,7 +273,10 @@ func (s *Store) RunRecord(loop string, status string, started, finished time.Tim
 		return err
 	}
 	if fi, err := os.Stat(path); err == nil && fi.Size() > runsCompactBytes {
-		return compactRuns(path, runRetention())
+		// The append above is atomic on its own (one small O_APPEND write), but
+		// a compaction rewrites the whole log, so two of them at once would drop
+		// records.
+		return s.withFileLock(true, func() error { return compactRuns(path, runRetention()) })
 	}
 	return nil
 }

@@ -2,8 +2,12 @@ package state
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
+	"sync"
 	"testing"
 	"time"
 )
@@ -120,4 +124,71 @@ func TestRunsAreTrimmedToRetention(t *testing.T) {
 	if int(last["i"].(float64)) != 79 {
 		t.Fatalf("kept the wrong end of the log: last i=%v", last["i"])
 	}
+}
+
+// TestConcurrentProcessesDoNotClobberEachOther drives the store from several
+// OS processes, which is how it is actually used: every loop run is its own
+// `fleet run`. A sync.Mutex is invisible across that boundary.
+func TestConcurrentProcessesDoNotClobberEachOther(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "f.json")
+	if s, err := Open(p); err != nil {
+		t.Fatal(err)
+	} else if err := s.Set("seed", "present"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Each worker owns its own key. With no arbitration, whole-map writers race
+	// and keys go missing; with the lock every key must survive.
+	const workers = 8
+	const perWorker = 15
+	helper := filepath.Join(dir, "helper")
+	build := exec.Command("go", "build", "-o", helper, "./internal/state/testdata/writer")
+	build.Dir = repoRoot(t)
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build helper: %v\n%s", err, out)
+	}
+
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func(w int) {
+			defer wg.Done()
+			cmd := exec.Command(helper, p, fmt.Sprintf("key%d", w), strconv.Itoa(perWorker))
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Errorf("worker %d: %v\n%s", w, err, out)
+			}
+		}(w)
+	}
+	wg.Wait()
+
+	s, err := Open(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v, ok := s.Get("seed"); !ok || v != "present" {
+		t.Fatal("the seed key was clobbered by concurrent writers")
+	}
+	for w := 0; w < workers; w++ {
+		key := fmt.Sprintf("key%d", w)
+		v, ok := s.Get(key)
+		if !ok {
+			t.Errorf("%s missing entirely -- a writer lost the whole key", key)
+			continue
+		}
+		// Append was used, so every increment must be present.
+		arr, _ := v.([]interface{})
+		if len(arr) != perWorker {
+			t.Errorf("%s has %d entries, want %d -- writes were lost", key, len(arr), perWorker)
+		}
+	}
+}
+
+func repoRoot(t *testing.T) string {
+	t.Helper()
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return filepath.Dir(filepath.Dir(wd)) // internal/state -> repo root
 }
