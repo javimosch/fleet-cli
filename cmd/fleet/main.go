@@ -298,9 +298,18 @@ func cmdStatus(args []string) int {
 	approved, _ := q.List(hitl.Approved)
 	rejected, _ := q.List(hitl.Rejected)
 	drafting, _ := q.List(hitl.Drafting)
+	// Run history used to live in the state map, so this dumped 4 MB of it on
+	// the busiest fleets and buried the 10 KB anyone actually wanted. It is its
+	// own log now; report a count and the tail.
+	recent, _ := st.Runs(5)
 	outputJSON(map[string]interface{}{
 		"fleet": fleet.Name,
 		"state": st.All(),
+		"runs": map[string]interface{}{
+			"count":  st.RunCount(),
+			"log":    st.RunsPath(),
+			"recent": recent,
+		},
 		// drafting is reported separately from pending on purpose: a drafting
 		// proposal is work in progress, not something waiting on the human.
 		"drafting": len(drafting),
