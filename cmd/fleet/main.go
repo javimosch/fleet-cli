@@ -52,6 +52,8 @@ func main() {
 		os.Exit(cmdStatus(tail))
 	case "queue":
 		os.Exit(cmdQueue(tail))
+	case "draft":
+		os.Exit(cmdDraft(tail))
 	case "relais-poll":
 		os.Exit(cmdRelaisPoll(tail))
 	case "approve", "reject":
@@ -78,6 +80,8 @@ Commands:
   emit <fleet> <event> [--data <json>] [--dry-run]
   status <fleet>
   queue <fleet>
+  draft list <fleet>
+  draft fill <fleet> <proposal-id> --body-file <path>
   approve <fleet> <proposal-id> [--reason <reason>]
   reject <fleet> <proposal-id> [--reason <reason>]
   relais-poll <fleet>
@@ -100,6 +104,16 @@ Environment:
 func fleetPath(name string) string {
 	if f := flagValue([]string{}, "f"); f != "" {
 		return f
+	}
+	// An argument that is itself a fleet directory wins over FLEET_DIR. Without
+	// this, every command had to be run from the one directory that has a
+	// `fleets/` child, and a loop shelling back into `fleet` could only ever
+	// address its own fleet (FLEET_DIR is set in its environment) no matter what
+	// it passed.
+	if name != "" {
+		if st, err := os.Stat(filepath.Join(name, "fleet.yml")); err == nil && !st.IsDir() {
+			return name
+		}
 	}
 	if d := os.Getenv("FLEET_DIR"); d != "" {
 		return d
@@ -280,9 +294,13 @@ func cmdStatus(args []string) int {
 	pending, _ := q.List(hitl.Pending)
 	approved, _ := q.List(hitl.Approved)
 	rejected, _ := q.List(hitl.Rejected)
+	drafting, _ := q.List(hitl.Drafting)
 	outputJSON(map[string]interface{}{
-		"fleet":    fleet.Name,
-		"state":    st.All(),
+		"fleet": fleet.Name,
+		"state": st.All(),
+		// drafting is reported separately from pending on purpose: a drafting
+		// proposal is work in progress, not something waiting on the human.
+		"drafting": len(drafting),
 		"pending":  len(pending),
 		"approved": len(approved),
 		"rejected": len(rejected),
@@ -309,6 +327,68 @@ func cmdQueue(args []string) int {
 	}
 	outputJSON(proposals)
 	return 0
+}
+
+// cmdDraft lists proposals awaiting a body, or fills one in.
+//
+// The body is read from a file rather than an argument: outbound copy is
+// multi-line and an LLM loop writing it through a shell argument is one
+// quoting bug away from a truncated or mangled message.
+func cmdDraft(args []string) int {
+	usage := "usage: fleet draft list <fleet> | fleet draft fill <fleet> <proposal-id> --body-file <path>"
+	if len(args) < 2 {
+		failCode(80, "invalid_arguments", usage, "fleet help-json")
+	}
+	sub := args[0]
+	fleet, _, err := loadFleet(args[1])
+	if err != nil {
+		failCode(92, "resource_not_found", fmt.Sprintf("load fleet: %v", err), "fleet init --name <name> --repo <owner/name>")
+	}
+	_, q, err := openStores(fleet)
+	if err != nil {
+		failCode(90, "state_unavailable", fmt.Sprintf("open stores: %v", err), "set FLEET_STATE_DIR to a writable directory")
+	}
+
+	switch sub {
+	case "list":
+		drafts, err := q.Drafts()
+		if err != nil {
+			failCode(90, "queue_unavailable", fmt.Sprintf("list drafts: %v", err), "check FLEET_STATE_DIR")
+		}
+		if drafts == nil {
+			drafts = []hitl.Proposal{}
+		}
+		outputJSON(drafts)
+		return 0
+	case "fill":
+		bodyFile := ""
+		clean := make([]string, 0, len(args))
+		for i := 0; i < len(args); i++ {
+			if args[i] == "--body-file" {
+				if i+1 < len(args) {
+					bodyFile = args[i+1]
+					i++
+				}
+				continue
+			}
+			clean = append(clean, args[i])
+		}
+		if len(clean) < 3 || bodyFile == "" {
+			failCode(80, "invalid_arguments", usage, "fleet help-json")
+		}
+		body, err := os.ReadFile(bodyFile)
+		if err != nil {
+			failCode(92, "body_unreadable", fmt.Sprintf("read %s: %v", bodyFile, err), "write the body to a file first")
+		}
+		id := clean[2]
+		if err := q.SetBody(id, string(body)); err != nil {
+			failCode(92, "draft_not_fillable", fmt.Sprintf("set body: %v", err), "fleet draft list <fleet>")
+		}
+		outputJSON(map[string]interface{}{"ok": true, "proposal_id": id, "status": hitl.Pending, "bytes": len(body)})
+		return 0
+	}
+	failCode(80, "invalid_arguments", usage, "fleet help-json")
+	return 80
 }
 
 // cmdRelaisPoll checks relais inboxes for pending proposals and applies decisions.
@@ -380,6 +460,18 @@ func cmdDecision(decision string, args []string) int {
 	st := hitl.Approved
 	if decision == "reject" {
 		st = hitl.Rejected
+	}
+	// Never let an empty body be approved. relais and the digest only ever show
+	// pending proposals, so this is unreachable through the normal path -- it is
+	// here because `fleet approve` takes an id from anywhere, and an approved
+	// blank body is an approval the human could not have read.
+	if st == hitl.Approved {
+		all, _ := q.List("")
+		for _, p := range all {
+			if p.ID == proposalID && strings.TrimSpace(p.Body) == "" {
+				failCode(81, "empty_body", fmt.Sprintf("proposal %s has no body (status %s) -- there is nothing to approve", proposalID, p.Status), "fleet draft list "+fleetName)
+			}
+		}
 	}
 	if err := q.UpdateStatus(proposalID, st, reason, "cli"); err != nil {
 		failCode(92, "proposal_not_found", fmt.Sprintf("update status: %v", err), "fleet queue <fleet>")

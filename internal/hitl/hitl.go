@@ -9,17 +9,24 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
 
 // Status values for a proposal.
 const (
-	Pending   = "pending"
-	Approved  = "approved"
-	Rejected  = "rejected"
+	Pending    = "pending"
+	Approved   = "approved"
+	Rejected   = "rejected"
 	Dispatched = "dispatched"
-	Expired   = "expired"
+	Expired    = "expired"
+	// Drafting marks a proposal whose body has not been written yet. It is not
+	// approvable: every approval path (relais.PollQueue, the HITL digest,
+	// dispatch) filters on Pending, so a drafting row is never put in front of a
+	// human and never reaches a send. A body-filling loop moves it to Pending
+	// with SetBody once there is copy to approve.
+	Drafting = "drafting"
 )
 
 // ProposalRelais holds the public relais catch-all metadata for one proposal.
@@ -35,21 +42,21 @@ type ProposalRelais struct {
 
 // Proposal is an outbound action awaiting human approval.
 type Proposal struct {
-	ID         string                 `json:"id"`
-	Fleet      string                 `json:"fleet"`
-	Loop       string                 `json:"loop"`
-	Kind       string                 `json:"kind"`      // e.g. comment, post, dm
-	Target     string                 `json:"target"`    // URL or repo/issue
-	Body       string                 `json:"body"`
-	BodyHash   string                 `json:"body_hash"` // hash at approval time
-	Meta       map[string]interface{} `json:"meta"`
-	Relais     *ProposalRelais        `json:"relais,omitempty"`
-	Status     string                 `json:"status"`
-	CreatedAt  time.Time              `json:"created_at"`
-	ApprovedAt *time.Time             `json:"approved_at,omitempty"`
-	Approver   string                 `json:"approver,omitempty"`
-	Reason     string                 `json:"reason,omitempty"`
-	DispatchedAt *time.Time           `json:"dispatched_at,omitempty"`
+	ID           string                 `json:"id"`
+	Fleet        string                 `json:"fleet"`
+	Loop         string                 `json:"loop"`
+	Kind         string                 `json:"kind"`   // e.g. comment, post, dm
+	Target       string                 `json:"target"` // URL or repo/issue
+	Body         string                 `json:"body"`
+	BodyHash     string                 `json:"body_hash"` // hash at approval time
+	Meta         map[string]interface{} `json:"meta"`
+	Relais       *ProposalRelais        `json:"relais,omitempty"`
+	Status       string                 `json:"status"`
+	CreatedAt    time.Time              `json:"created_at"`
+	ApprovedAt   *time.Time             `json:"approved_at,omitempty"`
+	Approver     string                 `json:"approver,omitempty"`
+	Reason       string                 `json:"reason,omitempty"`
+	DispatchedAt *time.Time             `json:"dispatched_at,omitempty"`
 }
 
 // Queue stores proposals in a JSONL file.
@@ -75,7 +82,27 @@ func (q *Queue) Add(p Proposal) (string, error) {
 		p.CreatedAt = time.Now().UTC()
 	}
 	p.Status = Pending
+	// A proposal with no body has nothing to approve. Approving one would hash
+	// the empty string and hand the handler a blank message, so it enters the
+	// queue as a draft instead of asking a human to rubber-stamp nothing.
+	if strings.TrimSpace(p.Body) == "" {
+		p.Status = Drafting
+	}
 	p.BodyHash = hash(p.Body)
+
+	// A loop that re-emits the same proposal must not queue it twice. Loops
+	// derive ids deterministically from the target -- peage uses "peage_<cid>" --
+	// so a re-run before the loop has recorded its own verdict appends a second
+	// identical row, and the human is asked to approve the same thing twice.
+	// Cheaper to refuse here, once, than to make every loop remember.
+	if existing, err := q.readAllLocked(); err == nil {
+		for _, e := range existing {
+			if e.ID == p.ID {
+				return p.ID, nil
+			}
+		}
+	}
+
 	line, err := json.Marshal(p)
 	if err != nil {
 		return "", err
@@ -167,6 +194,41 @@ func (q *Queue) SetRelais(id string, r *ProposalRelais) error {
 	}
 	return fmt.Errorf("proposal %s not found", id)
 }
+
+// SetBody writes the copy for a drafting proposal and promotes it to Pending.
+//
+// It refuses any proposal that is not Drafting. That is the whole safety
+// property: copy can only be written before a human has seen the proposal, so
+// no later step can swap the body out from under an approval. BodyHash is
+// recomputed here and frozen from this point on.
+func (q *Queue) SetBody(id, body string) error {
+	if strings.TrimSpace(body) == "" {
+		return fmt.Errorf("refusing to set an empty body on %s", id)
+	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	proposals, err := q.readAllLocked()
+	if err != nil {
+		return err
+	}
+	for i := range proposals {
+		if proposals[i].ID != id {
+			continue
+		}
+		if proposals[i].Status != Drafting {
+			return fmt.Errorf("proposal %s is %s, not %s -- its body is already settled",
+				id, proposals[i].Status, Drafting)
+		}
+		proposals[i].Body = body
+		proposals[i].BodyHash = hash(body)
+		proposals[i].Status = Pending
+		return q.writeAllLocked(proposals)
+	}
+	return fmt.Errorf("proposal %s not found", id)
+}
+
+// Drafts returns proposals still waiting for a body, oldest first.
+func (q *Queue) Drafts() ([]Proposal, error) { return q.List(Drafting) }
 
 // Approved returns approved-but-not-dispatched proposals, sorted oldest first.
 func (q *Queue) Approved() ([]Proposal, error) {
