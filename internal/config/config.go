@@ -4,6 +4,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -30,10 +31,19 @@ type Defaults struct {
 }
 
 // State configures the persistence backend.
+//
+// Only "json" exists. The field used to be parsed and then read by nothing, so
+// a fleet could declare `backend: sqlite`, be believed by everyone reading the
+// file, and be silently ignored by the code -- the same shape as the budget
+// keys that named caps nobody enforced. Validate now rejects anything it
+// cannot actually provide, so the declaration is either true or loud.
 type State struct {
 	Backend string `yaml:"backend"`
 	Path    string `yaml:"path"`
 }
+
+// SupportedStateBackends is what state.Open can actually provide.
+var SupportedStateBackends = []string{"json"}
 
 // Budgets are global rate and safety limits.
 type Budgets struct {
@@ -125,6 +135,17 @@ func Load(path string) (*Fleet, error) {
 
 // Validate checks invariants and returns an error for the first violation.
 func (f *Fleet) Validate() error {
+	switch f.State.Backend {
+	case "", "json":
+	default:
+		return fmt.Errorf("state.backend %q is not implemented -- fleet-cli only provides %s; "+
+			"remove the key or set it to json rather than declaring a backend that is silently ignored",
+			f.State.Backend, strings.Join(SupportedStateBackends, ", "))
+	}
+	if f.State.Path != "" {
+		return fmt.Errorf("state.path is not implemented -- the state file location comes from " +
+			"FLEET_STATE_DIR (default ~/.local/share/fleet-cli); setting it here has no effect")
+	}
 	names := make(map[string]bool)
 	for _, l := range f.Loops {
 		if l.Name == "" {

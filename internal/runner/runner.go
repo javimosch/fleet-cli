@@ -110,6 +110,12 @@ func Run(ctx context.Context, fleet *config.Fleet, loop *config.Loop, fleetDir s
 		fmt.Sprintf("FLEET_DRY_RUN=%t", dryRun),
 		fmt.Sprintf("FLEET_STATE_FILE=%s", stPath(fleet)),
 		fmt.Sprintf("FLEET_QUEUE_FILE=%s", queuePath(fleet)),
+		// Where a loop keeps data of its OWN -- a sqlite db, a cursor file,
+		// downloaded artefacts. Deliberately not the state directory: five
+		// fleets had quietly put their databases next to <fleet>.json, which
+		// made them read as a fleet-cli feature when fleet-cli neither creates
+		// nor knows about them.
+		fmt.Sprintf("FLEET_DATA_DIR=%s", dataDir()),
 	)
 	if dryRun {
 		cmd.Env = append(cmd.Env, "DRY_RUN=1")
@@ -308,6 +314,14 @@ func splitLines(data []byte) [][]byte {
 // stPath and queuePath return default paths.
 func stPath(fleet *config.Fleet) string {
 	return filepath.Join(stateDir(), fleet.Name+".json")
+}
+
+// dataDir is where loops keep their own data. FLEET_DATA_DIR overrides it.
+func dataDir() string {
+	if d := os.Getenv("FLEET_DATA_DIR"); d != "" {
+		return d
+	}
+	return filepath.Join(os.Getenv("HOME"), ".local", "share", "fleets")
 }
 
 func queuePath(fleet *config.Fleet) string {
