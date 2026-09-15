@@ -152,7 +152,13 @@ func Run(ctx context.Context, fleet *config.Fleet, loop *config.Loop, fleetDir s
 			if dr, ok := e.Data["dry_run"].(bool); ok && dr {
 				continue
 			}
+			// `count` is what most outbound loops report, but not all: peage-outreach
+			// -- the only fleet that actually sends cold email -- reports `sent`,
+			// so counting only `count` left the one fleet that most needs a daily
+			// cap contributing nothing to it. Take whichever the loop reports.
 			if c, ok := e.Data["count"].(float64); ok {
+				sent += int(c)
+			} else if c, ok := e.Data["sent"].(float64); ok {
 				sent += int(c)
 			}
 		}
