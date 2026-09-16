@@ -487,7 +487,7 @@ func cmdRelaisPoll(args []string) int {
 	}
 
 	client := relais.NewClient()
-	results, err := relais.PollQueue(client, q, st)
+	results, stats, err := relais.PollQueue(client, q, st)
 	if err != nil {
 		failCode(105, "relais_poll_failed", fmt.Sprintf("poll: %v", err), "check RELAIS_URL and network")
 	}
@@ -506,7 +506,10 @@ func cmdRelaisPoll(args []string) int {
 		})
 	}
 
-	outputJSON(map[string]interface{}{"ok": true, "decisions": results})
+	// Report what was left unchecked. A poll that ran out of budget is not a
+	// failure -- the next tick picks up where it stopped -- but it has to be
+	// visible, or "ok":true hides a queue nobody is actually reading.
+	outputJSON(map[string]interface{}{"ok": true, "decisions": results, "stats": stats})
 	return 0
 }
 

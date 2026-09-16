@@ -16,6 +16,7 @@ import (
 	"github.com/javimosch/fleet-cli/internal/config"
 	"github.com/javimosch/fleet-cli/internal/hart"
 	"github.com/javimosch/fleet-cli/internal/hitl"
+	"github.com/javimosch/fleet-cli/internal/pressure"
 	"github.com/javimosch/fleet-cli/internal/state"
 )
 
@@ -65,6 +66,16 @@ func Run(ctx context.Context, fleet *config.Fleet, loop *config.Loop, fleetDir s
 	runDir := filepath.Join(os.TempDir(), "fleet-cli-runs", runID)
 	if err := os.MkdirAll(runDir, 0o755); err != nil {
 		return Result{}, fmt.Errorf("mkdir run dir: %w", err)
+	}
+
+	// System pressure, checked here for the same reason the budget is: it is the
+	// one place every loop passes through. There is a shell guard for this too,
+	// but only 37 of 99 loops call it -- an opt-in gate protects the loops whose
+	// authors were already being careful. A dry run is free, so it is exempt.
+	if !dryRun {
+		if reason := pressure.Check(pressure.FromEnv()); reason != "" {
+			return Result{DryRun: dryRun, Skipped: "system under pressure: " + reason}, nil
+		}
 	}
 
 	// Outbound budgets, enforced here because this is the only place every
