@@ -29,7 +29,35 @@ var (
 	psiCPUPath  = "/proc/pressure/cpu"
 	memInfoPath = "/proc/meminfo"
 	loadAvgPath = "/proc/loadavg"
+
+	// cgroup v2 exposes PSI per cgroup. Inside a container that is the only
+	// honest answer to "is MY work being starved".
+	cgroupIOPath  = "/sys/fs/cgroup/io.pressure"
+	cgroupCPUPath = "/sys/fs/cgroup/cpu.pressure"
 )
+
+// psiPaths returns the io and cpu pressure files to read, preferring this
+// cgroup's own over the host's.
+//
+// This matters more than it sounds. rbm21 is an LXC container, and lxcfs
+// virtualises /proc/cpuinfo, /proc/diskstats and /proc/loadavg for the
+// container -- but NOT /proc/pressure. So /proc/pressure/io reports the
+// PHYSICAL HOST: it read io.full=42.8% while this container's own cgroup read
+// 0.00%. The fleets were being skipped because a different tenant on the same
+// machine was busy, while they were neither causing the stall nor suffering it.
+//
+// A gate on the wrong number is worse than no gate: it stops real work for a
+// reason that has nothing to do with the work.
+func psiPaths() (ioPath, cpuPath string) {
+	ioPath, cpuPath = psiIOPath, psiCPUPath
+	if _, err := os.Stat(cgroupIOPath); err == nil {
+		ioPath = cgroupIOPath
+	}
+	if _, err := os.Stat(cgroupCPUPath); err == nil {
+		cpuPath = cgroupCPUPath
+	}
+	return ioPath, cpuPath
+}
 
 // Limits are the thresholds a loop must be under to start.
 type Limits struct {
@@ -44,6 +72,9 @@ type Limits struct {
 	// means "do not add work".
 	CPUSomeAvg10 float64
 	IOFullAvg10  float64
+	// HostIOFullAvg10 gates on the whole machine rather than this container.
+	// 0 disables it, which is the default: see Check.
+	HostIOFullAvg10 float64
 }
 
 // DefaultLimits are deliberately generous. This gate exists to refuse work on a
@@ -54,8 +85,9 @@ func DefaultLimits() Limits {
 	return Limits{
 		LoadPerCore:  2.0,
 		MemUsedPct:   90,
-		CPUSomeAvg10: 60,
-		IOFullAvg10:  40,
+		CPUSomeAvg10:    60,
+		IOFullAvg10:     40,
+		HostIOFullAvg10: 0,
 	}
 }
 
@@ -66,6 +98,7 @@ func FromEnv() Limits {
 	envFloat("FLEET_MAX_MEM_PCT", &l.MemUsedPct)
 	envFloat("FLEET_MAX_CPU_PSI", &l.CPUSomeAvg10)
 	envFloat("FLEET_MAX_IO_PSI", &l.IOFullAvg10)
+	envFloat("FLEET_MAX_HOST_IO_PSI", &l.HostIOFullAvg10)
 	return l
 }
 
@@ -78,14 +111,25 @@ func Check(l Limits) string {
 		return ""
 	}
 
+	ioPath, cpuPath := psiPaths()
 	if l.IOFullAvg10 > 0 {
-		if v, ok := psi(psiIOPath, "full", "avg10"); ok && v > l.IOFullAvg10 {
+		if v, ok := psi(ioPath, "full", "avg10"); ok && v > l.IOFullAvg10 {
 			return fmt.Sprintf("io pressure %.1f%% of the last 10s with everything stalled (limit %.0f%%)", v, l.IOFullAvg10)
 		}
 	}
 	if l.CPUSomeAvg10 > 0 {
-		if v, ok := psi(psiCPUPath, "some", "avg10"); ok && v > l.CPUSomeAvg10 {
+		if v, ok := psi(cpuPath, "some", "avg10"); ok && v > l.CPUSomeAvg10 {
 			return fmt.Sprintf("cpu pressure %.1f%% over the last 10s (limit %.0f%%)", v, l.CPUSomeAvg10)
+		}
+	}
+	// Optional courtesy to the rest of the machine: back off when the HOST is
+	// struggling even though we are not. Off by default -- a neighbour being
+	// busy is not a reason to stop, and on a shared box it would mean the
+	// quietest tenant yields to the loudest forever.
+	if l.HostIOFullAvg10 > 0 && ioPath != psiIOPath {
+		if v, ok := psi(psiIOPath, "full", "avg10"); ok && v > l.HostIOFullAvg10 {
+			return fmt.Sprintf("host io pressure %.1f%% (limit %.0f%%) -- this container is fine, the machine is not",
+				v, l.HostIOFullAvg10)
 		}
 	}
 	if l.MemUsedPct > 0 {

@@ -19,6 +19,48 @@ func fixtures(t *testing.T, io, cpu, mem, load string) {
 	}
 	psiIOPath, psiCPUPath = write("io", io), write("cpu", cpu)
 	memInfoPath, loadAvgPath = write("mem", mem), write("load", load)
+	// No cgroup files by default, so psiPaths falls back to the fixtures above.
+	// Otherwise these tests would silently read the build machine's real ones.
+	cgroupIOPath, cgroupCPUPath = filepath.Join(d, "nope-io"), filepath.Join(d, "nope-cpu")
+}
+
+// TestContainerPSIBeatsHostPSI is the bug this package got wrong in production.
+// rbm21 is an LXC container: lxcfs virtualises /proc/loadavg and friends but
+// NOT /proc/pressure, so /proc/pressure/io reports the physical host. It read
+// io.full=42.8% while the container's own cgroup read 0.00%, and fleet loops
+// were skipped because a different tenant was busy.
+func TestContainerPSIBeatsHostPSI(t *testing.T) {
+	d := t.TempDir()
+	write := func(name, body string) string {
+		p := filepath.Join(d, name)
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	// The host is stalling badly; this container is not.
+	psiIOPath = write("host-io", "some avg10=42.85 total=1\nfull avg10=42.80 total=1\n")
+	psiCPUPath = write("host-cpu", "some avg10=0.00 total=1\n")
+	cgroupIOPath = write("cg-io", "some avg10=0.00 total=1\nfull avg10=0.00 total=1\n")
+	cgroupCPUPath = write("cg-cpu", "some avg10=0.00 total=1\n")
+	memInfoPath = write("mem", rbm21Mem)
+	loadAvgPath = write("load", "1.61 2.09 2.47 1/761 1\n")
+
+	l := DefaultLimits()
+	l.LoadPerCore = 0
+	if reason := Check(l); reason != "" {
+		t.Fatalf("skipped work because ANOTHER tenant was busy: %s", reason)
+	}
+
+	// Opting in to host-level courtesy backoff must still work.
+	l.HostIOFullAvg10 = 40
+	reason := Check(l)
+	if reason == "" {
+		t.Fatal("HostIOFullAvg10 did not gate on the host")
+	}
+	if !contains(reason, "host io pressure") {
+		t.Fatalf("reason does not name the host: %q", reason)
+	}
 }
 
 // The numbers rbm21 actually reported: load 8.15 on 6 cores with 16 GB free and
