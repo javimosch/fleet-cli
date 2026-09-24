@@ -12,11 +12,11 @@ import (
 	"time"
 
 	"github.com/javimosch/fleet-cli/internal/budget"
-	"github.com/javimosch/fleet-cli/internal/channels"
 	"github.com/javimosch/fleet-cli/internal/config"
 	"github.com/javimosch/fleet-cli/internal/hart"
 	"github.com/javimosch/fleet-cli/internal/hitl"
 	"github.com/javimosch/fleet-cli/internal/pressure"
+	"github.com/javimosch/fleet-cli/internal/relais"
 	"github.com/javimosch/fleet-cli/internal/state"
 )
 
@@ -229,13 +229,12 @@ func Run(ctx context.Context, fleet *config.Fleet, loop *config.Loop, fleetDir s
 		}
 	}
 
-	// Queue proposals and notify channels (only when not dry-running).
-	m := channels.NewManager(fleet)
+	// Queue proposals and attach relais approve/reject links (only when not dry-running).
 	if err != nil {
-		_ = m.NotifyError(loop.Name, err, res.Log)
 		return res, err
 	}
 	if !dryRun {
+		rc := relais.NewClient()
 		for _, p := range res.Proposals {
 			p.Fleet = fleet.Name
 			p.Loop = loop.Name
@@ -244,7 +243,7 @@ func Run(ctx context.Context, fleet *config.Fleet, loop *config.Loop, fleetDir s
 				return res, fmt.Errorf("queue proposal: %w", err)
 			}
 			p.ID = id
-			_ = m.NotifyHITL(p, q, st)
+			_ = relais.Attach(rc, fleet.Name, p, q, st)
 		}
 		// Append run cost to state ledger.
 		if res.Cost != nil && len(res.Cost) > 0 {
@@ -253,11 +252,6 @@ func Run(ctx context.Context, fleet *config.Fleet, loop *config.Loop, fleetDir s
 			}
 		}
 	}
-	events := make([]map[string]interface{}, len(res.Events))
-	for i, e := range res.Events {
-		events[i] = map[string]interface{}{"name": e.Name, "data": e.Data}
-	}
-	_ = m.NotifyEvent(loop.Name, "ok", events, res.Cost)
 
 	return res, nil
 }

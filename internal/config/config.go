@@ -12,15 +12,14 @@ import (
 
 // Fleet is the top-level fleet configuration.
 type Fleet struct {
-	Version  int                `yaml:"version"`
-	Name     string             `yaml:"name"`
-	Repo     string             `yaml:"repo"`
-	Defaults Defaults           `yaml:"defaults"`
-	State    State              `yaml:"state"`
-	Budgets  Budgets            `yaml:"budgets"`
-	HITL     HITL               `yaml:"hitl"`
-	Loops    []Loop             `yaml:"loops"`
-	Channels map[string]Channel `yaml:"channels"`
+	Version  int      `yaml:"version"`
+	Name     string   `yaml:"name"`
+	Repo     string   `yaml:"repo"`
+	Defaults Defaults `yaml:"defaults"`
+	State    State    `yaml:"state"`
+	Budgets  Budgets  `yaml:"budgets"`
+	HITL     HITL     `yaml:"hitl"`
+	Loops    []Loop   `yaml:"loops"`
 }
 
 // Defaults are inherited by loops unless overridden.
@@ -102,13 +101,6 @@ type Rate struct {
 	MaxPerRun  int `yaml:"max_per_run"`
 	MaxPerDay  int `yaml:"max_per_day"`
 	MaxPerHour int `yaml:"max_per_hour"`
-}
-
-// Channel is an external notification target.
-type Channel struct {
-	Kind    string `yaml:"kind"`
-	Channel string `yaml:"channel"`
-	URL     string `yaml:"url"`
 }
 
 // Load reads and validates a fleet.yml from path.

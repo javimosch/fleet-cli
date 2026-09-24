@@ -29,12 +29,11 @@ func guideData() map[string]interface{} {
 			"inspect fleet status and the costs/run ledger",
 		},
 		"concepts": map[string]interface{}{
-			"fleet":    "a named YAML graph of loops, budgets, HITL policy, and channels",
+			"fleet":    "a named YAML graph of loops, budgets, and HITL policy",
 			"loop":     "an executable command with optional schedule, timeout, event listeners, and outbound behavior",
 			"run_dir":  "the temporary FLEET_RUN_DIR where a loop writes result.json, proposals.jsonl, state.json, and cost.json",
 			"proposal": "a JSONL outbound action awaiting a human decision",
 			"dry_run":  "executes the loop but does not persist state or queue proposals",
-			"channel":  "an optional best-effort cuzz notification destination",
 		},
 		"commands": map[string]interface{}{
 			"local": []string{
@@ -122,7 +121,7 @@ func cmdHelpJSON() int {
 		"output":      "json",
 		"interactive": false,
 		"commands":    helpCatalog(),
-		"exit_codes":  map[string]string{"0": "success", "5": "update available", "80": "input/validation", "90": "precondition/resource", "100": "external/integration", "110": "internal"}, "env": []string{"FLEET_DIR", "FLEET_STATE_DIR", "FLEET_LIVE", "FLEET_CUZZ_BIN", "CUZZ_URL", "CUZZ_TOKEN", "CUZZ_AGENT", "FEEDBACK_RELAY", "FLEET_UPDATE_URL"},
+		"exit_codes":  map[string]string{"0": "success", "5": "update available", "80": "input/validation", "90": "precondition/resource", "100": "external/integration", "110": "internal"}, "env": []string{"FLEET_DIR", "FLEET_STATE_DIR", "FLEET_LIVE", "FEEDBACK_RELAY", "FLEET_UPDATE_URL"},
 		"see_also": []string{"fleet guide", "fleet version"},
 	})
 	return 0

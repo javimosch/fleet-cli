@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/javimosch/fleet-cli/internal/channels"
 	"github.com/javimosch/fleet-cli/internal/config"
 	"github.com/javimosch/fleet-cli/internal/hitl"
 	"github.com/javimosch/fleet-cli/internal/relais"
@@ -492,20 +491,6 @@ func cmdRelaisPoll(args []string) int {
 		failCode(105, "relais_poll_failed", fmt.Sprintf("poll: %v", err), "check RELAIS_URL and network")
 	}
 
-	// Best-effort cuzz notification for each applied decision.
-	m := channels.NewManager(fleet)
-	for _, r := range results {
-		if r.Decision == "" || r.Error != "" {
-			continue
-		}
-		_ = m.Send("ops", "decision", fmt.Sprintf("%s %s", r.Decision, r.ID), map[string]interface{}{
-			"proposal_id": r.ID,
-			"decision":    r.Decision,
-			"approver":    r.By,
-			"reason":      "relais",
-		})
-	}
-
 	// Report what was left unchecked. A poll that ran out of budget is not a
 	// failure -- the next tick picks up where it stopped -- but it has to be
 	// visible, or "ok":true hides a queue nobody is actually reading.
@@ -560,15 +545,6 @@ func cmdDecision(decision string, args []string) int {
 	if err := q.UpdateStatus(proposalID, st, reason, "cli"); err != nil {
 		failCode(92, "proposal_not_found", fmt.Sprintf("update status: %v", err), "fleet queue <fleet>")
 	}
-
-	// Best-effort cuzz notification.
-	m := channels.NewManager(fleet)
-	_ = m.Send("ops", "decision", fmt.Sprintf("%s %s", decision, proposalID), map[string]interface{}{
-		"proposal_id": proposalID,
-		"decision":    decision,
-		"reason":      reason,
-		"approver":    "cli",
-	})
 
 	outputJSON(map[string]interface{}{"ok": true, "decision": decision, "proposal_id": proposalID})
 	return 0

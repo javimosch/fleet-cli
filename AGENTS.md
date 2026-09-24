@@ -37,7 +37,7 @@ Loops write `result.json` and `proposals.jsonl` (compact JSONL, one line per pro
 ## HITL flow
 
 1. Loop writes compact `proposals.jsonl`.
-2. Runner queues them, mints a relais inbox, and sends a cuzz notification with one-tap approve/reject URLs.
+2. Runner queues them and mints a relais inbox per proposal, storing one-tap approve/reject URLs on the queue entry.
 3. Human taps the `Approve:` or `Reject:` URL, or runs `fleet approve <fleet> <id>` / `fleet reject <fleet> <id>`.
 4. The `relais_poll` loop (or `fleet relais-poll <fleet>`) reads the inbox and updates the queue.
 5. `dispatch` loop emits `action.approved` and appends `pending_actions`.
@@ -46,7 +46,7 @@ Loops write `result.json` and `proposals.jsonl` (compact JSONL, one line per pro
 ## Relais HITL details
 
 - Each proposal creates one relais inbox on `relais.intrane.fr`.
-- The cuzz message contains `Approve:` and `Reject:` capability URLs; opening one captures the decision.
+- The queue entry carries `approve_url` and `reject_url` capability URLs; opening one captures the decision.
 - The `relais_poll` loop (scheduled `@every 1m`) polls relais and updates the queue.
 - The relais inbox token is stored in fleet state (`relais_tokens.<proposal_id>`), never in the queue.
 - Free inboxes are one-hour TTL. Set `RELAIS_PEAGE_WALLET` in `/etc/default/fleet-cli` for persistent inboxes.
