@@ -32,6 +32,13 @@ func cmdInstall(args []string) int {
 	if err != nil {
 		failCode(92, "resource_not_found", fmt.Sprintf("load fleet: %v", err), "fleet init --name <name> --repo <owner/name>")
 	}
+	// A .disabled marker in the fleet dir means the fleet is off everywhere:
+	// refuse to (re)install units that were deliberately turned down. Deploy
+	// tooling treats it like .nodeploy (skip + remove leftovers). Remove the
+	// file to re-enable.
+	if _, err := os.Stat(filepath.Join(fleetDir, ".disabled")); err == nil {
+		failCode(75, "fleet_disabled", fmt.Sprintf("fleet %s is disabled (.disabled marker in %s)", fleet.Name, fleetDir), "rm the .disabled file to re-enable")
+	}
 	// The unit names come from fleet.Name, which is what systemd.Install writes.
 	// Taking them from the argument instead worked only while the argument was
 	// always the fleet's own name -- `fleet install .` rendered the right files
