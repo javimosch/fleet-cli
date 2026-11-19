@@ -129,6 +129,7 @@ func TestUnreadableProcLetsWorkThrough(t *testing.T) {
 func TestOverrideAndOptOut(t *testing.T) {
 	fixtures(t, rbm21IO, rbm21CPU, rbm21Mem, rbm21Load)
 	l := DefaultLimits()
+	l.LoadPerCore = 0 // core count varies by build machine; covered separately
 	l.CPUSomeAvg10 = 1 // rbm21's cpu some avg10 is 5.20
 	if Check(l) == "" {
 		t.Fatal("a tightened limit did not block")
