@@ -119,6 +119,13 @@ func fleetPath(name string) string {
 		if st, err := os.Stat(filepath.Join(name, "fleet.yml")); err == nil && !st.IsDir() {
 			return name
 		}
+		// A bare fleet name resolves against ./fleets/ before FLEET_DIR: loop
+		// working directories have no fleets/ child, so FLEET_DIR still pins a
+		// loop to its own fleet, while an operator in the checkout root gets the
+		// fleet they actually named instead of the ambient one.
+		if st, err := os.Stat(filepath.Join(".", "fleets", name, "fleet.yml")); err == nil && !st.IsDir() {
+			return filepath.Join(".", "fleets", name)
+		}
 	}
 	if d := os.Getenv("FLEET_DIR"); d != "" {
 		return d
